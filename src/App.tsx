@@ -51,7 +51,7 @@ const DEFAULT_FORM: FormState = {
   contentBaseMembers:
     '디디, 아이비, 엘리, 에밀리, 에냐, 지니, 릴리, 제이, 휘, 케빈, 카이트',
   excludedMembers: '둘리',
-  separateMembers: '라토, 랄드, 그레이, 키티',
+  separateMembers: '라토, 랄드, 그레이, 키티\n카이트, 케빈, 휘',
   restrictedDevelopers: '루소, 폴리, 찬',
   restrictedContentBase: '휘, 케빈, 카이트',
 }
@@ -93,6 +93,13 @@ function parseNames(raw: string): string[] {
     .split(/[,\n]/)
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function parseSeparateGroups(raw: string): string[][] {
+  return raw
+    .split(/\n+/)
+    .map((group) => group.split(',').map((item) => item.trim()).filter(Boolean))
+    .filter((group) => group.length > 0)
 }
 
 function uniqueNames(names: string[]): string[] {
@@ -163,9 +170,12 @@ function getTeamMembers(team: Team) {
   return [team.developer, team.distribution, ...team.contentBase]
 }
 
-function validateTeam(team: Team, separateMembers: Set<string>, minTotalTeamSize: number) {
-  const separateCount = getTeamMembers(team).filter((member) => separateMembers.has(member)).length
-  if (separateCount > 1) {
+function hasGroupConflict(members: string[], separateGroups: string[][]) {
+  return separateGroups.some((group) => members.filter((member) => group.includes(member)).length > 1)
+}
+
+function validateTeam(team: Team, separateGroups: string[][], minTotalTeamSize: number) {
+  if (hasGroupConflict(getTeamMembers(team), separateGroups)) {
     return `분리 대상 인원이 같은 팀에 배정되었습니다: ${team.teamName}`
   }
 
@@ -189,7 +199,7 @@ function buildTeams(form: FormState): DashboardResult {
   const contentBaseMembers = uniqueNames(parseNames(form.contentBaseMembers)).filter(
     (name) => !excludedMembers.has(name),
   )
-  const separateMembers = new Set(parseNames(form.separateMembers))
+  const separateGroups = parseSeparateGroups(form.separateMembers)
   const restrictedDevelopers = new Set(parseNames(form.restrictedDevelopers))
   const restrictedContentBase = new Set(parseNames(form.restrictedContentBase))
 
@@ -247,8 +257,7 @@ function buildTeams(form: FormState): DashboardResult {
       for (const distribution of candidates) {
         if (usedDistribution.has(distribution)) continue
 
-        const specialCount = Number(separateMembers.has(developer)) + Number(separateMembers.has(distribution))
-        if (specialCount > 1) continue
+        if (hasGroupConflict([developer, distribution], separateGroups)) continue
 
         usedDistribution.add(distribution)
         pairings.push({ developer, distribution })
@@ -309,7 +318,7 @@ function buildTeams(form: FormState): DashboardResult {
         }))
 
         const validationError = candidateTeams
-          .map((team) => validateTeam(team, separateMembers, minTotalTeamSize))
+          .map((team) => validateTeam(team, separateGroups, minTotalTeamSize))
           .find(Boolean)
         if (validationError) return false
 
@@ -339,13 +348,15 @@ function buildTeams(form: FormState): DashboardResult {
             return false
           }
 
-          const specialCount =
-            assignments[index].filter((name) => separateMembers.has(name)).length +
-            Number(separateMembers.has(team.developer)) +
-            Number(separateMembers.has(team.distribution)) +
-            Number(separateMembers.has(member))
+          if (
+            hasGroupConflict(
+              [team.developer, team.distribution, ...assignments[index], member],
+              separateGroups,
+            )
+          ) {
+            return false
+          }
 
-          if (specialCount > 1) return false
           if (counts[index] >= baseTargets[index]) return false
           return true
         })
@@ -659,7 +670,7 @@ function App() {
               />
             </label>
             <label>
-              <span>같은 팀 금지 인원</span>
+              <span>같은 팀 금지 인원 (줄바꿈마다 별도 그룹)</span>
               <textarea
                 rows={3}
                 value={form.separateMembers}
