@@ -33,6 +33,7 @@ type FormState = {
   teamCount: number
   minTotalTeamSize: number
   seed: number
+  lockSeed: boolean
   developers: string
   distributionMembers: string
   contentBaseMembers: string
@@ -46,6 +47,7 @@ const DEFAULT_FORM: FormState = {
   teamCount: 5,
   minTotalTeamSize: 4,
   seed: 31,
+  lockSeed: false,
   developers: '그레이, 폴리, 루소, 찬, 키티',
   distributionMembers: '랄드, 희디, 데이지, 조이, 라토',
   contentBaseMembers:
@@ -118,6 +120,14 @@ function createRng(seed: number) {
   }
 }
 
+function generateRandomSeed() {
+  if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+    return window.crypto.getRandomValues(new Uint32Array(1))[0]
+  }
+
+  return Math.floor(Math.random() * 4294967295)
+}
+
 function shuffle<T>(items: T[], random: () => number): T[] {
   const clone = [...items]
   for (let i = clone.length - 1; i > 0; i -= 1) {
@@ -186,10 +196,10 @@ function validateTeam(team: Team, separateGroups: string[][], minTotalTeamSize: 
   return null
 }
 
-function buildTeams(form: FormState): DashboardResult {
+function buildTeams(form: FormState, seedOverride?: number): DashboardResult {
   const teamCount = Number(form.teamCount)
   const minTotalTeamSize = Number(form.minTotalTeamSize)
-  const seed = Number(form.seed)
+  const seed = Number(seedOverride ?? form.seed)
 
   const excludedMembers = new Set(parseNames(form.excludedMembers))
   const developers = uniqueNames(parseNames(form.developers)).filter((name) => !excludedMembers.has(name))
@@ -514,9 +524,23 @@ function App() {
     }))
   }
 
+  const handleToggleSeedLock = (checked: boolean) => {
+    setForm((current) => ({
+      ...current,
+      lockSeed: checked,
+    }))
+  }
+
   const handleGenerate = () => {
     try {
-      const built = buildTeams(form)
+      const effectiveSeed = form.lockSeed ? Number(form.seed) : generateRandomSeed()
+      const built = buildTeams(form, effectiveSeed)
+      if (!form.lockSeed) {
+        setForm((current) => ({
+          ...current,
+          seed: effectiveSeed,
+        }))
+      }
       setResult(built)
       setError('')
     } catch (buildError) {
@@ -621,6 +645,19 @@ function App() {
                 value={form.seed}
                 onChange={(event) => handleChange('seed', event.target.value)}
               />
+            </label>
+            <label className="checkbox-field">
+              <span>시드 고정</span>
+              <div className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={form.lockSeed}
+                  onChange={(event) => handleToggleSeedLock(event.target.checked)}
+                />
+                <small>
+                  끄면 실행할 때마다 새 시드로 다시 추첨되고, 켜면 같은 시드값으로 동일 결과를 재현합니다.
+                </small>
+              </div>
             </label>
           </div>
 
