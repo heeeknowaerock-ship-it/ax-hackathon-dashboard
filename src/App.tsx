@@ -59,18 +59,18 @@ const DEFAULT_FORM: FormState = {
 const STORAGE_KEY = 'ax-hackathon-dashboard-state'
 
 const TEAM_COLOR_CANDIDATES = [
-  { name: '코랄', hex: '#ff7f6e' },
+  { name: '빨강', hex: '#e85d5d' },
+  { name: '주황', hex: '#f39a4a' },
+  { name: '노랑', hex: '#e3bf2f' },
+  { name: '초록', hex: '#4fb56a' },
   { name: '민트', hex: '#55c7a5' },
-  { name: '라벤더', hex: '#8f7cff' },
-  { name: '스카이', hex: '#54a7ff' },
-  { name: '레몬', hex: '#f4c94a' },
-  { name: '피치', hex: '#ffaf7a' },
-  { name: '루비', hex: '#e95b7b' },
-  { name: '올리브', hex: '#8fa63f' },
-  { name: '네이비', hex: '#4661d6' },
-  { name: '플럼', hex: '#8d5ac9' },
-  { name: '아쿠아', hex: '#31b7c7' },
-  { name: '로즈', hex: '#f06d9b' },
+  { name: '하늘', hex: '#54a7ff' },
+  { name: '파랑', hex: '#4661d6' },
+  { name: '남색', hex: '#314a9f' },
+  { name: '보라', hex: '#8f63db' },
+  { name: '분홍', hex: '#f06d9b' },
+  { name: '갈색', hex: '#9b6b43' },
+  { name: '회색', hex: '#7d8798' },
 ]
 
 const TEAM_FOOD_CANDIDATES = [
