@@ -269,8 +269,8 @@ textarea {
 .team-card {
   padding: 18px;
   border-radius: 20px;
-  background: #ffffff;
-  border: 1px solid #dde6f3;
+  background: linear-gradient(180deg, #ffffff 0%, color-mix(in srgb, var(--team-accent, #dbe6f7) 8%, white 92%) 100%);
+  border: 1px solid color-mix(in srgb, var(--team-accent, #dbe6f7) 28%, #d7e2f2 72%);
 }
 
 .team-card-head {
@@ -278,14 +278,31 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
+.team-label {
+  margin: 0 0 4px;
+  color: color-mix(in srgb, var(--team-accent, #6d99f8) 70%, #294062 30%);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.team-name-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.team-name-meta span,
 .team-card-head span {
   flex-shrink: 0;
   border-radius: 999px;
-  background: #edf4ff;
-  color: #2f5dbb;
+  background: color-mix(in srgb, var(--team-accent, #6d99f8) 12%, white 88%);
+  color: color-mix(in srgb, var(--team-accent, #6d99f8) 72%, #1f2a40 28%);
   padding: 5px 10px;
   font-size: 12px;
   font-weight: 700;

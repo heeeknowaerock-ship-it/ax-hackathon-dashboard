@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import './App.css'
 
 type Team = {
+  teamLabel: string
   teamName: string
+  colorName: string
+  foodName: string
+  accentColor: string
   developer: string
   distribution: string
   contentBase: string[]
@@ -54,6 +58,36 @@ const DEFAULT_FORM: FormState = {
 
 const STORAGE_KEY = 'ax-hackathon-dashboard-state'
 
+const TEAM_COLOR_CANDIDATES = [
+  { name: '코랄', hex: '#ff7f6e' },
+  { name: '민트', hex: '#55c7a5' },
+  { name: '라벤더', hex: '#8f7cff' },
+  { name: '스카이', hex: '#54a7ff' },
+  { name: '레몬', hex: '#f4c94a' },
+  { name: '피치', hex: '#ffaf7a' },
+  { name: '루비', hex: '#e95b7b' },
+  { name: '올리브', hex: '#8fa63f' },
+  { name: '네이비', hex: '#4661d6' },
+  { name: '플럼', hex: '#8d5ac9' },
+  { name: '아쿠아', hex: '#31b7c7' },
+  { name: '로즈', hex: '#f06d9b' },
+]
+
+const TEAM_FOOD_CANDIDATES = [
+  '타코',
+  '파스타',
+  '도넛',
+  '마카롱',
+  '샌드위치',
+  '만두',
+  '라멘',
+  '쿠키',
+  '피자',
+  '젤라토',
+  '토스트',
+  '초밥',
+]
+
 function parseNames(raw: string): string[] {
   return raw
     .split(/[,\n]/)
@@ -97,6 +131,32 @@ function scoreCounts(counts: number[]) {
     variance,
     totalPenalty: (max - min) * 100 + variance,
   }
+}
+
+function buildRandomTeamNames(teamCount: number, seed: number) {
+  const namingRandom = createRng(seed ^ 0x9e3779b9)
+  const colors = shuffle(TEAM_COLOR_CANDIDATES, namingRandom)
+  const foods = shuffle(TEAM_FOOD_CANDIDATES, namingRandom)
+
+  return Array.from({ length: teamCount }, (_, index) => {
+    const color = colors[index % colors.length]
+    const food = foods[index % foods.length]
+    return {
+      teamLabel: `Team ${index + 1}`,
+      teamName: `${color.name} ${food}팀`,
+      colorName: color.name,
+      foodName: food,
+      accentColor: color.hex,
+    }
+  })
+}
+
+function assignRandomTeamNames(teams: Team[], seed: number): Team[] {
+  const generatedNames = buildRandomTeamNames(teams.length, seed)
+  return teams.map((team, index) => ({
+    ...team,
+    ...generatedNames[index],
+  }))
 }
 
 function getTeamMembers(team: Team) {
@@ -211,7 +271,11 @@ function buildTeams(form: FormState): DashboardResult {
     }
 
     const teams = pairings.map<Team>((pairing, index) => ({
+      teamLabel: `Team ${index + 1}`,
       teamName: `Team ${index + 1}`,
+      colorName: '',
+      foodName: '',
+      accentColor: '#dbe6f7',
       developer: pairing.developer,
       distribution: pairing.distribution,
       contentBase: [],
@@ -341,7 +405,7 @@ function buildTeams(form: FormState): DashboardResult {
   }
 
   const finalResult: TeamResult = bestResult
-  const teams = finalResult.teams
+  const teams = assignRandomTeamNames(finalResult.teams, seed)
   const presentationOrder = recommendPresentationOrder(teams, restrictedDevelopers, restrictedContentBase)
 
   return {
@@ -351,6 +415,7 @@ function buildTeams(form: FormState): DashboardResult {
       `시드값 ${seed} 기준으로 생성한 결과입니다.`,
       `팀 수는 ${teamCount}팀, 최소 팀 인원은 ${minTotalTeamSize}명으로 적용했습니다.`,
       `${[...restrictedContentBase].join(', ')} 은(는) ${[...restrictedDevelopers].join(', ')} 팀에만 배정되도록 반영했습니다.`,
+      `팀명은 색 + 음식 조합 후보에서 랜덤 배정했습니다.`,
       `${finalResult.attempts}회 탐색 안에 조건을 만족하는 조합을 찾았습니다.`,
     ],
   }
@@ -401,7 +466,11 @@ function recommendPresentationOrder(
 }
 
 function teamToBullet(team: Team) {
-  return `- ${team.teamName}: ${[team.developer, team.distribution, ...team.contentBase].join(' / ')}`
+  return `- ${team.teamName} (${team.teamLabel} / ${team.colorName} + ${team.foodName}): ${[
+    team.developer,
+    team.distribution,
+    ...team.contentBase,
+  ].join(' / ')}`
 }
 
 function presentationToBullet(slot: PresentationSlot) {
@@ -657,10 +726,17 @@ function App() {
                 {result.teams.map((team) => {
                   const members = [team.developer, team.distribution, ...team.contentBase]
                   return (
-                    <article className="team-card" key={team.teamName}>
+                    <article className="team-card" key={team.teamLabel} style={{ '--team-accent': team.accentColor } as CSSProperties}>
                       <div className="team-card-head">
-                        <h3>{team.teamName}</h3>
+                        <div>
+                          <p className="team-label">{team.teamLabel}</p>
+                          <h3>{team.teamName}</h3>
+                        </div>
                         <span>{members.length}명</span>
+                      </div>
+                      <div className="team-name-meta">
+                        <span>{team.colorName}</span>
+                        <span>{team.foodName}</span>
                       </div>
                       <dl>
                         <div>
