@@ -17,7 +17,6 @@ type PresentationSlot = {
   order: number
   teamName: string
   members: string[]
-  reason: string
 }
 
 type DashboardResult = {
@@ -398,14 +397,6 @@ function recommendPresentationOrder(
     order: index + 1,
     teamName: team.teamName,
     members: [team.developer, team.distribution, ...team.contentBase],
-    reason:
-      index === 0
-        ? '도입용으로 부담이 적은 비교적 간결한 팀 구성'
-        : index === ordered.length - 1
-          ? '마지막 마감용으로 인원 구성이 가장 풍성한 팀'
-          : team.hasRestrictedDeveloper
-            ? '중반 몰입도를 올리는 제약형 팀 발표'
-            : '중간 템포 조절용 발표 순서',
   }))
 }
 
@@ -693,7 +684,6 @@ function App() {
               <div className="presentation-card">
                 <div className="presentation-head">
                   <h3>추천 발표 순서</h3>
-                  <p>초반은 부담이 적은 팀으로 시작하고, 마지막은 인원 구성이 풍성한 팀으로 마감하도록 추천했습니다.</p>
                 </div>
                 <ol className="presentation-list">
                   {result.presentationOrder.map((slot) => (
@@ -702,7 +692,6 @@ function App() {
                       <div>
                         <strong>{slot.teamName}</strong>
                         <p>{slot.members.join(' / ')}</p>
-                        <span>{slot.reason}</span>
                       </div>
                     </li>
                   ))}
