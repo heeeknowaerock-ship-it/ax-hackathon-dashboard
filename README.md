@@ -1,51 +1,103 @@
-# AX Hackathon Dashboard
+# 론칭 타래 현황 대시보드
 
-사내 AX 해커톤용 팀 자동편성 + 발표 순서 추천 대시보드입니다.
+Microsoft Teams의 론칭 타래를 읽어 작품별 준비 상태와 등록 마감 위험 건을 확인하고, Teams 채널에 리마인드를 발송하는 내부 운영 대시보드입니다.
 
-## 기능
+## 주요 기능
 
-1. 개발자 / 콘텐츠유통팀 / 콘텐츠본부 명단 입력
-2. 제외 인원, 같은 팀 금지 인원 설정
-3. 특정 콘본 인원을 특정 개발자 팀에만 배정하는 제약 적용
-4. 최소 팀 인원 조건 적용
-5. 시드값 기반 재현 가능한 팀 편성
-6. 스레드 공유용 결과 복사
-7. 추천 발표 순서 자동 생성
+1. Teams 채널의 론칭 타래와 답글 조회
+2. 작품명·작가명·레이블·출간일·플랫폼 파싱
+3. 서지·원고·표지·제작·등록·승인 상태 반영
+4. 출간일 기준 등록 마감일 자동 계산
+5. 등록 마감 임박 미등록 작품 자동 선별
+6. 담당자별 리마인드 문구 생성 및 복사
+7. Teams Workflow/Incoming Webhook을 통한 자동 알림 발송
+8. 동일한 대상 목록의 반복 발송 방지
 
-## 기본 규칙
+## 프로젝트 구성
 
-- 팀마다 개발자 1명 필수
-- 팀마다 콘텐츠유통팀 1명 필수
-- 콘텐츠본부 인원은 조건을 만족하는 범위에서 최대한 균형 있게 배분
-- 특정 콘본 인원은 지정된 개발자 팀에만 들어가도록 제한 가능
+```text
+src/
+  App.tsx                    대시보드 화면과 사용자 동작
+  launchDashboard.ts        마감일·상태·리마인드 계산
+  teamsApi.ts                프론트엔드 Teams API 클라이언트
+  syncMeta.ts                동기화 결과 메타데이터
+  *.test.ts                  Vitest 테스트
+server/
+  teamsServer.mjs            로컬 Teams API 서버
+  teamsSync.mjs              Microsoft Graph 조회와 타래 파싱
+  teamsAutomation.mjs        예약 실행·웹훅 발송·중복 방지
+TEAMS_SETUP.md               Teams 연동 설정 안내
+```
 
 ## 로컬 실행
 
+### 1. 패키지 설치
+
 ```bash
 npm install
+```
+
+### 2. Teams 동기화·자동 알림 서버 실행
+
+```bash
+npm run server
+```
+
+기본 주소는 `http://127.0.0.1:8787`입니다.
+
+### 3. 프론트엔드 실행
+
+별도 터미널에서 실행합니다.
+
+```bash
 npm run dev
 ```
 
-기본 개발 서버:
-- `http://localhost:5173`
+Vite가 출력하는 로컬 주소로 접속합니다.
 
-## 빌드
+## 검증
 
 ```bash
+npm test
+npm run lint
 npm run build
-npm run preview
 ```
 
-## 배포
+## Teams 연동에 필요한 값
 
-이 프로젝트는 Vercel 정적 배포 기준으로 구성했습니다.
+### Microsoft Graph 읽기
 
-```bash
-vercel deploy --prod
-```
+- Tenant ID
+- Client ID
+- Client Secret
+- Team ID
+- Channel ID
 
-## 기술 스택
+### 알림 발송
 
-- React
-- TypeScript
-- Vite
+- Teams Workflow 또는 Incoming Webhook URL
+
+자세한 앱 권한과 입력 순서는 [`TEAMS_SETUP.md`](./TEAMS_SETUP.md)를 참고합니다.
+
+## 보안 주의사항
+
+- Client Secret과 Webhook URL을 Git에 커밋하지 않습니다.
+- 로컬 자동화 설정 파일 `server/.teams-automation-state.json`은 Git에서 제외됩니다.
+- 실제 운영 시에는 비밀값을 서버 환경변수 또는 별도 비밀 저장소에서 관리해야 합니다.
+- 브라우저에는 Client Secret 원문을 장기 저장하지 않습니다.
+
+## 현재 운영상 제한
+
+- 자동 알림은 `npm run server` 프로세스가 실행 중일 때만 동작합니다.
+- 현재 자동 알림은 담당자 이름을 텍스트로 표시하며, 실제 Teams `@멘션`은 별도 사용자 ID 매핑과 메시지 형식 구현이 필요합니다.
+- 정적 Vercel 프론트엔드만 배포하면 로컬 백엔드와 예약 실행이 자동으로 배포되지 않습니다.
+- 서버 상태는 로컬 파일 기반이므로 다중 서버 또는 서버리스 환경에서는 영구 저장소로 교체해야 합니다.
+
+## 배포 전 확인사항
+
+1. 테스트 채널에서 Teams 읽기 성공 확인
+2. 가상 작품 1건으로 웹훅 발송 확인
+3. 반복 실행 시 중복 발송 방지 확인
+4. 등록 완료 작품이 알림 대상에서 제외되는지 확인
+5. 비밀정보가 Git 변경사항에 포함되지 않았는지 확인
+6. 항상 실행되는 백엔드와 영구 저장 방식 확정

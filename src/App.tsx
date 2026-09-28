@@ -1,830 +1,1054 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import './App.css'
+import {
+  DEFAULT_REMINDER_POLICY,
+  buildAllReminderMessages,
+  buildAssigneeReminderMessage,
+  buildReminderMessage,
+  formatDisplayDate,
+  getTodayIsoDate,
+  groupReminderTargetsByAssignee,
+  normalizeReminderPolicy,
+  summarizeLaunches,
+  type LaunchRecord,
+  type LaunchStatus,
+  type ReminderPolicy,
+} from './launchDashboard'
+import {
+  getTeamsAutomation,
+  getTeamsHealth,
+  runTeamsAutomation,
+  saveTeamsAutomation,
+  syncTeamsThreads,
+  type TeamsAutomationRunResponse,
+  type TeamsAutomationState,
+  type TeamsSyncConfig,
+  type TeamsSyncResponse,
+} from './teamsApi'
+import { buildSyncSnapshot, formatSyncRunSummary, formatSyncTimestamp, type SyncRunSummary } from './syncMeta'
 
-type Team = {
-  teamLabel: string
-  teamName: string
-  colorName: string
-  foodName: string
-  accentColor: string
-  developer: string
-  distribution: string
-  contentBase: string[]
-}
+type FilterMode = '전체' | '리마인드 필요' | '완료 제외'
+type SyncStatus = 'idle' | 'loading' | 'success' | 'error'
+type BackendStatus = '확인 중' | '연결됨' | '미연결'
 
-type TeamResult = {
-  teams: Team[]
-  attempts: number
-}
+type EditableBooleanKey =
+  | 'bibliographicReady'
+  | 'manuscriptReady'
+  | 'coverReady'
+  | 'productionStarted'
+  | 'registered'
+  | 'approvalPending'
+  | 'thumbsUpComplete'
+  | 'completed'
 
-type PresentationSlot = {
-  order: number
-  teamName: string
-  members: string[]
-}
+const STORAGE_KEY = 'launch-thread-dashboard-v1'
+const TEAMS_CONFIG_KEY = 'launch-thread-teams-config-v1'
+const REMINDER_POLICY_KEY = 'launch-thread-reminder-policy-v1'
+const SYNC_SUMMARY_KEY = 'launch-thread-sync-summary-v1'
 
-type DashboardResult = {
-  teams: Team[]
-  presentationOrder: PresentationSlot[]
-  explanation: string[]
-}
-
-type FormState = {
-  teamCount: number
-  minTotalTeamSize: number
-  seed: number
-  lockSeed: boolean
-  developers: string
-  distributionMembers: string
-  contentBaseMembers: string
-  excludedMembers: string
-  separateMembers: string
-  restrictedDevelopers: string
-  restrictedContentBase: string
-}
-
-const DEFAULT_FORM: FormState = {
-  teamCount: 5,
-  minTotalTeamSize: 4,
-  seed: 31,
-  lockSeed: false,
-  developers: '그레이, 폴리, 루소, 찬, 키티',
-  distributionMembers: '랄드, 희디, 데이지, 조이, 라토',
-  contentBaseMembers:
-    '디디, 아이비, 엘리, 에밀리, 에냐, 지니, 릴리, 제이, 휘, 케빈, 카이트',
-  excludedMembers: '둘리',
-  separateMembers: '라토, 랄드, 그레이, 키티\n카이트, 케빈, 휘',
-  restrictedDevelopers: '루소, 폴리, 찬',
-  restrictedContentBase: '휘, 케빈, 카이트',
-}
-
-const STORAGE_KEY = 'ax-hackathon-dashboard-state'
-
-const TEAM_COLOR_CANDIDATES = [
-  { name: '빨강', hex: '#e85d5d' },
-  { name: '주황', hex: '#f39a4a' },
-  { name: '노랑', hex: '#e3bf2f' },
-  { name: '초록', hex: '#4fb56a' },
-  { name: '민트', hex: '#55c7a5' },
-  { name: '하늘', hex: '#54a7ff' },
-  { name: '파랑', hex: '#4661d6' },
-  { name: '남색', hex: '#314a9f' },
-  { name: '보라', hex: '#8f63db' },
-  { name: '분홍', hex: '#f06d9b' },
-  { name: '갈색', hex: '#9b6b43' },
-  { name: '회색', hex: '#7d8798' },
+const SAMPLE_RECORDS: LaunchRecord[] = [
+  {
+    id: 'launch-001',
+    label: '에이블',
+    assignee: '조이',
+    author: '유연 작가',
+    title: '새벽 끝의 로맨스',
+    format: '연재',
+    platform: '카카오페이지',
+    releaseDate: '2026-08-27',
+    bibliographicReady: true,
+    manuscriptReady: false,
+    coverReady: true,
+    productionStarted: false,
+    registered: false,
+    approvalPending: false,
+    completed: false,
+    thumbsUpComplete: false,
+    launchThreadUrl: 'https://teams.example.com/thread/launch-001',
+    note: '원고만 들어오면 바로 제작 가능',
+  },
+  {
+    id: 'launch-002',
+    label: '원티드',
+    assignee: '라토',
+    author: '백운 작가',
+    title: '검은 봉인의 귀환',
+    format: '단행',
+    platform: '리디',
+    releaseDate: '2026-08-25',
+    bibliographicReady: true,
+    manuscriptReady: true,
+    coverReady: true,
+    productionStarted: true,
+    registered: true,
+    approvalPending: true,
+    completed: false,
+    thumbsUpComplete: false,
+    launchThreadUrl: 'https://teams.example.com/thread/launch-002',
+    note: '등록 완료, 승인 대기',
+  },
+  {
+    id: 'launch-003',
+    label: '비올렛',
+    assignee: '희디',
+    author: '은설 작가',
+    title: '마지막 성좌의 밤',
+    format: '연재',
+    platform: '네이버 시리즈',
+    releaseDate: '2026-08-29',
+    bibliographicReady: false,
+    manuscriptReady: false,
+    coverReady: false,
+    productionStarted: false,
+    registered: false,
+    approvalPending: false,
+    completed: false,
+    thumbsUpComplete: false,
+    launchThreadUrl: 'https://teams.example.com/thread/launch-003',
+    note: '초기 등록 정보 정리 필요',
+  },
+  {
+    id: 'launch-004',
+    label: '에이블',
+    assignee: '데이지',
+    author: '하린 작가',
+    title: '푸른 여름의 오해',
+    format: '단행',
+    platform: '밀리의서재',
+    releaseDate: '2026-09-02',
+    bibliographicReady: true,
+    manuscriptReady: true,
+    coverReady: true,
+    productionStarted: true,
+    registered: true,
+    approvalPending: false,
+    completed: true,
+    thumbsUpComplete: true,
+    launchThreadUrl: 'https://teams.example.com/thread/launch-004',
+    note: '완료 따봉 반영',
+  },
 ]
 
-const TEAM_FOOD_CANDIDATES = [
-  '김치볶음밥',
-  '고르곤졸라',
-  '로제파스타',
-  '치즈돈까스',
-  '불고기버거',
-  '떡볶이',
-  '크림리조또',
-  '바질피자',
-  '초코도넛',
-  '유부초밥',
-  '마라샹궈',
-  '샤인머스캣케이크',
+const STATUS_OPTIONS: Array<'전체' | LaunchStatus> = [
+  '전체',
+  '일정 미확정',
+  '서지정보 대기중',
+  '원고 대기중',
+  '표지 대기중',
+  '제작 가능',
+  '제작 진행중',
+  '등록 완료',
+  '등록 후 승인 대기중',
+  '완료',
 ]
 
-function parseNames(raw: string): string[] {
-  return raw
-    .split(/[,\n]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
+const FILTER_OPTIONS: FilterMode[] = ['전체', '리마인드 필요', '완료 제외']
+
+const DEFAULT_TEAMS_CONFIG: TeamsSyncConfig = {
+  tenantId: '',
+  clientId: '',
+  clientSecret: '',
+  teamId: '',
+  channelId: '',
+  limit: 50,
 }
 
-function parseSeparateGroups(raw: string): string[][] {
-  return raw
-    .split(/\n+/)
-    .map((group) => group.split(',').map((item) => item.trim()).filter(Boolean))
-    .filter((group) => group.length > 0)
+const DEFAULT_AUTOMATION_STATE: TeamsAutomationState = {
+  enabled: false,
+  webhookUrl: '',
+  hasWebhookUrl: false,
+  intervalMinutes: 30,
+  leadBusinessDays: 3,
+  teamsConfig: DEFAULT_TEAMS_CONFIG,
+  hasClientSecret: false,
+  lastRunAt: null,
+  lastRunStatus: 'idle',
+  lastRunMessage: '자동 알림이 아직 실행되지 않았습니다.',
+  lastSentAt: null,
+  lastSentCount: 0,
 }
 
-function uniqueNames(names: string[]): string[] {
-  return [...new Set(names)]
-}
+function readStoredRecords(): LaunchRecord[] {
+  if (typeof window === 'undefined') return SAMPLE_RECORDS
 
-function createRng(seed: number) {
-  let state = seed >>> 0
+  const raw = window.localStorage.getItem(STORAGE_KEY)
+  if (!raw) return SAMPLE_RECORDS
 
-  return () => {
-    state += 0x6d2b79f5
-    let t = state
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  try {
+    const parsed = JSON.parse(raw) as LaunchRecord[]
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : SAMPLE_RECORDS
+  } catch {
+    return SAMPLE_RECORDS
   }
 }
 
-function generateRandomSeed() {
-  if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
-    return window.crypto.getRandomValues(new Uint32Array(1))[0]
-  }
+function readStoredTeamsConfig(): TeamsSyncConfig {
+  if (typeof window === 'undefined') return DEFAULT_TEAMS_CONFIG
 
-  return Math.floor(Math.random() * 4294967295)
-}
+  const raw = window.localStorage.getItem(TEAMS_CONFIG_KEY)
+  if (!raw) return DEFAULT_TEAMS_CONFIG
 
-function shuffle<T>(items: T[], random: () => number): T[] {
-  const clone = [...items]
-  for (let i = clone.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(random() * (i + 1))
-    ;[clone[i], clone[j]] = [clone[j], clone[i]]
-  }
-  return clone
-}
-
-function scoreCounts(counts: number[]) {
-  const max = Math.max(...counts)
-  const min = Math.min(...counts)
-  const average = counts.reduce((sum, count) => sum + count, 0) / counts.length
-  const variance = counts.reduce((sum, count) => sum + (count - average) ** 2, 0)
-
-  return {
-    imbalance: max - min,
-    variance,
-    totalPenalty: (max - min) * 100 + variance,
-  }
-}
-
-function buildRandomTeamNames(teamCount: number, seed: number) {
-  const namingRandom = createRng(seed ^ 0x9e3779b9)
-  const colors = shuffle(TEAM_COLOR_CANDIDATES, namingRandom)
-  const foods = shuffle(TEAM_FOOD_CANDIDATES, namingRandom)
-
-  return Array.from({ length: teamCount }, (_, index) => {
-    const color = colors[index % colors.length]
-    const food = foods[index % foods.length]
+  try {
+    const parsed = JSON.parse(raw) as Partial<TeamsSyncConfig>
     return {
-      teamLabel: `Team ${index + 1}`,
-      teamName: `${color.name} ${food}팀`,
-      colorName: color.name,
-      foodName: food,
-      accentColor: color.hex,
+      ...DEFAULT_TEAMS_CONFIG,
+      ...parsed,
+      clientSecret: '',
     }
-  })
+  } catch {
+    return DEFAULT_TEAMS_CONFIG
+  }
 }
 
-function assignRandomTeamNames(teams: Team[], seed: number): Team[] {
-  const generatedNames = buildRandomTeamNames(teams.length, seed)
-  return teams.map((team, index) => ({
-    ...team,
-    ...generatedNames[index],
-  }))
+function persistTeamsConfig(config: TeamsSyncConfig) {
+  const { clientSecret: _clientSecret, ...safeConfig } = config
+  window.localStorage.setItem(TEAMS_CONFIG_KEY, JSON.stringify(safeConfig))
 }
 
-function getTeamMembers(team: Team) {
-  return [team.developer, team.distribution, ...team.contentBase]
+function readStoredReminderPolicy(): ReminderPolicy {
+  if (typeof window === 'undefined') return DEFAULT_REMINDER_POLICY
+
+  const raw = window.localStorage.getItem(REMINDER_POLICY_KEY)
+  if (!raw) return DEFAULT_REMINDER_POLICY
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<ReminderPolicy>
+    return normalizeReminderPolicy(parsed)
+  } catch {
+    return DEFAULT_REMINDER_POLICY
+  }
 }
 
-function hasGroupConflict(members: string[], separateGroups: string[][]) {
-  return separateGroups.some((group) => members.filter((member) => group.includes(member)).length > 1)
+function persistReminderPolicy(policy: ReminderPolicy) {
+  window.localStorage.setItem(REMINDER_POLICY_KEY, JSON.stringify(policy))
 }
 
-function validateTeam(team: Team, separateGroups: string[][], minTotalTeamSize: number) {
-  if (hasGroupConflict(getTeamMembers(team), separateGroups)) {
-    return `분리 대상 인원이 같은 팀에 배정되었습니다: ${team.teamName}`
-  }
+function readStoredSyncSummary(): SyncRunSummary | null {
+  if (typeof window === 'undefined') return null
 
-  if (getTeamMembers(team).length < minTotalTeamSize) {
-    return `최소 팀 인원 ${minTotalTeamSize}명을 만족하지 못했습니다: ${team.teamName}`
-  }
+  const raw = window.localStorage.getItem(SYNC_SUMMARY_KEY)
+  if (!raw) return null
 
-  return null
-}
-
-function buildTeams(form: FormState, seedOverride?: number): DashboardResult {
-  const teamCount = Number(form.teamCount)
-  const minTotalTeamSize = Number(form.minTotalTeamSize)
-  const seed = Number(seedOverride ?? form.seed)
-
-  const excludedMembers = new Set(parseNames(form.excludedMembers))
-  const developers = uniqueNames(parseNames(form.developers)).filter((name) => !excludedMembers.has(name))
-  const distributionMembers = uniqueNames(parseNames(form.distributionMembers)).filter(
-    (name) => !excludedMembers.has(name),
-  )
-  const contentBaseMembers = uniqueNames(parseNames(form.contentBaseMembers)).filter(
-    (name) => !excludedMembers.has(name),
-  )
-  const separateGroups = parseSeparateGroups(form.separateMembers)
-  const restrictedDevelopers = new Set(parseNames(form.restrictedDevelopers))
-  const restrictedContentBase = new Set(parseNames(form.restrictedContentBase))
-
-  const duplicateAcrossRoles = [
-    ...developers.filter((name) => distributionMembers.includes(name) || contentBaseMembers.includes(name)),
-    ...distributionMembers.filter((name) => contentBaseMembers.includes(name)),
-  ]
-  const uniqueDuplicateAcrossRoles = uniqueNames(duplicateAcrossRoles)
-  if (uniqueDuplicateAcrossRoles.length > 0) {
-    throw new Error(
-      `한 사람이 여러 역할 목록에 동시에 들어가 있습니다: ${uniqueDuplicateAcrossRoles.join(', ')}`,
-    )
-  }
-
-  if (developers.length < teamCount) {
-    throw new Error(`개발자가 ${teamCount}명 이상 필요합니다. 현재 ${developers.length}명입니다.`)
-  }
-
-  if (distributionMembers.length < teamCount) {
-    throw new Error(`콘텐츠유통팀 인원이 ${teamCount}명 이상 필요합니다. 현재 ${distributionMembers.length}명입니다.`)
-  }
-
-  const minContentBasePerTeam = Math.max(minTotalTeamSize - 2, 0)
-  const requiredContentBaseTotal = minContentBasePerTeam * teamCount
-  if (contentBaseMembers.length < requiredContentBaseTotal) {
-    throw new Error(
-      `최소 팀 인원 ${minTotalTeamSize}명을 맞추려면 콘본이 최소 ${requiredContentBaseTotal}명 필요하지만 현재 ${contentBaseMembers.length}명입니다.`,
-    )
-  }
-
-  const specialMembers = contentBaseMembers.filter((member) => restrictedContentBase.has(member))
-  const nonSpecialMembers = contentBaseMembers.filter((member) => !restrictedContentBase.has(member))
-  if (specialMembers.length > 0 && restrictedDevelopers.size === 0) {
-    throw new Error('전용 배치 콘본이 있는데 허용 개발자 팀이 비어 있습니다.')
-  }
-
-  const random = createRng(seed)
-  let bestResult: TeamResult | null = null
-
-  for (let attempt = 0; attempt < 250; attempt += 1) {
-    const shuffledDevelopers = shuffle(developers, random).slice(0, teamCount)
-    const shuffledDistribution = shuffle(distributionMembers, random).slice(0, teamCount)
-
-    const pairings: Array<{ developer: string; distribution: string }> = []
-    const usedDistribution = new Set<string>()
-
-    const pairBacktrack = (index: number): boolean => {
-      if (index === shuffledDevelopers.length) {
-        return true
-      }
-
-      const developer = shuffledDevelopers[index]
-      const candidates = shuffle(shuffledDistribution, random)
-
-      for (const distribution of candidates) {
-        if (usedDistribution.has(distribution)) continue
-
-        if (hasGroupConflict([developer, distribution], separateGroups)) continue
-
-        usedDistribution.add(distribution)
-        pairings.push({ developer, distribution })
-        if (pairBacktrack(index + 1)) return true
-        pairings.pop()
-        usedDistribution.delete(distribution)
-      }
-
-      return false
+  try {
+    const parsed = JSON.parse(raw) as Partial<SyncRunSummary>
+    if (typeof parsed.applied !== 'number' || typeof parsed.skipped !== 'number' || typeof parsed.fetched !== 'number') {
+      return null
     }
 
-    if (!pairBacktrack(0)) {
-      continue
+    return {
+      lastSyncedAt: typeof parsed.lastSyncedAt === 'string' ? parsed.lastSyncedAt : null,
+      applied: parsed.applied,
+      skipped: parsed.skipped,
+      fetched: parsed.fetched,
     }
-
-    const baseTargets = Array.from({ length: teamCount }, () => minContentBasePerTeam)
-    const remainingSlots = contentBaseMembers.length - baseTargets.reduce((sum, value) => sum + value, 0)
-    for (let i = 0; i < remainingSlots; i += 1) {
-      baseTargets[i % teamCount] += 1
-    }
-
-    const teams = pairings.map<Team>((pairing, index) => ({
-      teamLabel: `Team ${index + 1}`,
-      teamName: `Team ${index + 1}`,
-      colorName: '',
-      foodName: '',
-      accentColor: '#dbe6f7',
-      developer: pairing.developer,
-      distribution: pairing.distribution,
-      contentBase: [],
-    }))
-
-    const specialTeamIndexes = teams
-      .map((team, index) => ({ team, index }))
-      .filter(({ team }) => restrictedDevelopers.has(team.developer))
-      .map(({ index }) => index)
-
-    if (specialMembers.length > specialTeamIndexes.length * Math.max(...baseTargets)) {
-      continue
-    }
-
-    const assignments = teams.map(() => [] as string[])
-    const counts = teams.map(() => 0)
-
-    const orderedMembers = [
-      ...shuffle(specialMembers, random),
-      ...shuffle(nonSpecialMembers, random),
-    ]
-
-    let validAssignment = false
-
-    const contentBacktrack = (memberIndex: number): boolean => {
-      if (memberIndex === orderedMembers.length) {
-        const scored = scoreCounts(counts)
-        const candidateTeams = teams.map((team, index) => ({
-          ...team,
-          contentBase: [...assignments[index]].sort((a, b) => a.localeCompare(b, 'ko')),
-        }))
-
-        const validationError = candidateTeams
-          .map((team) => validateTeam(team, separateGroups, minTotalTeamSize))
-          .find(Boolean)
-        if (validationError) return false
-
-        const candidateResult = {
-          teams: candidateTeams,
-          attempts: attempt + 1,
-        }
-
-        if (!bestResult) {
-          bestResult = candidateResult
-        } else {
-          const currentScore = scoreCounts(bestResult.teams.map((team) => team.contentBase.length))
-          if (scored.totalPenalty < currentScore.totalPenalty) {
-            bestResult = candidateResult
-          }
-        }
-
-        validAssignment = true
-        return true
-      }
-
-      const member = orderedMembers[memberIndex]
-      const candidateIndexes = teams
-        .map((team, index) => ({ team, index }))
-        .filter(({ team, index }) => {
-          if (restrictedContentBase.has(member) && !restrictedDevelopers.has(team.developer)) {
-            return false
-          }
-
-          if (
-            hasGroupConflict(
-              [team.developer, team.distribution, ...assignments[index], member],
-              separateGroups,
-            )
-          ) {
-            return false
-          }
-
-          if (counts[index] >= baseTargets[index]) return false
-          return true
-        })
-        .sort((left, right) => counts[left.index] - counts[right.index])
-        .map(({ index }) => index)
-
-      for (const teamIndex of shuffle(candidateIndexes, random)) {
-        assignments[teamIndex].push(member)
-        counts[teamIndex] += 1
-
-        const remainingMembers = orderedMembers.length - memberIndex - 1
-        const remainingCapacity = baseTargets.reduce((sum, target, index) => sum + (target - counts[index]), 0)
-        if (remainingCapacity < remainingMembers) {
-          assignments[teamIndex].pop()
-          counts[teamIndex] -= 1
-          continue
-        }
-
-        const restrictedRemaining = orderedMembers
-          .slice(memberIndex + 1)
-          .filter((name) => restrictedContentBase.has(name)).length
-        const restrictedCapacity = specialTeamIndexes.reduce(
-          (sum, index) => sum + (baseTargets[index] - counts[index]),
-          0,
-        )
-
-        if (restrictedCapacity < restrictedRemaining) {
-          assignments[teamIndex].pop()
-          counts[teamIndex] -= 1
-          continue
-        }
-
-        if (contentBacktrack(memberIndex + 1)) {
-          if (bestResult && scoreCounts(bestResult.teams.map((team) => team.contentBase.length)).imbalance === 0) {
-            return true
-          }
-        }
-
-        assignments[teamIndex].pop()
-        counts[teamIndex] -= 1
-      }
-
-      return false
-    }
-
-    contentBacktrack(0)
-
-    if (validAssignment && bestResult !== null) {
-      const currentBest: TeamResult = bestResult
-      const currentScore = scoreCounts(currentBest.teams.map((team) => team.contentBase.length))
-      if (currentScore.imbalance <= 1) break
-    }
-  }
-
-  if (bestResult === null) {
-    throw new Error('조건을 만족하는 팀 편성 결과를 찾지 못했습니다. 제약을 조금 완화해 주세요.')
-  }
-
-  const finalResult: TeamResult = bestResult
-  const teams = assignRandomTeamNames(finalResult.teams, seed)
-  const presentationOrder = recommendPresentationOrder(teams, restrictedDevelopers, restrictedContentBase)
-
-  return {
-    teams,
-    presentationOrder,
-    explanation: [
-      `시드값 ${seed} 기준으로 생성한 결과입니다.`,
-      `팀 수는 ${teamCount}팀, 최소 팀 인원은 ${minTotalTeamSize}명으로 적용했습니다.`,
-      `${[...restrictedContentBase].join(', ')} 은(는) ${[...restrictedDevelopers].join(', ')} 팀에만 배정되도록 반영했습니다.`,
-      `팀명은 색 + 음식 조합 후보에서 랜덤 배정했습니다.`,
-      `${finalResult.attempts}회 탐색 안에 조건을 만족하는 조합을 찾았습니다.`,
-    ],
+  } catch {
+    return null
   }
 }
 
-function recommendPresentationOrder(
-  teams: Team[],
-  restrictedDevelopers: Set<string>,
-  restrictedContentBase: Set<string>,
-): PresentationSlot[] {
-  const enriched = teams.map((team) => ({
-    ...team,
-    totalMembers: [team.developer, team.distribution, ...team.contentBase].length,
-    hasRestrictedDeveloper: restrictedDevelopers.has(team.developer),
-    restrictedContentCount: team.contentBase.filter((member) => restrictedContentBase.has(member)).length,
-  }))
+function persistSyncSummary(summary: SyncRunSummary | null) {
+  if (!summary) {
+    window.localStorage.removeItem(SYNC_SUMMARY_KEY)
+    return
+  }
 
-  const openerCandidates = enriched
-    .filter((team) => !team.hasRestrictedDeveloper)
-    .sort((a, b) => a.totalMembers - b.totalMembers || a.teamName.localeCompare(b.teamName, 'ko'))
-  const opener = openerCandidates[0] ?? [...enriched].sort((a, b) => a.totalMembers - b.totalMembers)[0]
-
-  const closer = [...enriched]
-    .sort(
-      (a, b) =>
-        b.totalMembers - a.totalMembers ||
-        b.restrictedContentCount - a.restrictedContentCount ||
-        a.teamName.localeCompare(b.teamName, 'ko'),
-    )
-    .find((team) => team.teamName !== opener.teamName) ?? opener
-
-  const middle = enriched
-    .filter((team) => team.teamName !== opener.teamName && team.teamName !== closer.teamName)
-    .sort(
-      (a, b) =>
-        Number(b.hasRestrictedDeveloper) - Number(a.hasRestrictedDeveloper) ||
-        a.totalMembers - b.totalMembers ||
-        a.teamName.localeCompare(b.teamName, 'ko'),
-    )
-
-  const ordered = [opener, ...middle, closer]
-
-  return ordered.map((team, index) => ({
-    order: index + 1,
-    teamName: team.teamName,
-    members: [team.developer, team.distribution, ...team.contentBase],
-  }))
+  window.localStorage.setItem(SYNC_SUMMARY_KEY, JSON.stringify(summary))
 }
 
-function teamToBullet(team: Team) {
-  return `- ${team.teamName} (${team.teamLabel} / ${team.colorName} + ${team.foodName}): ${[
-    team.developer,
-    team.distribution,
-    ...team.contentBase,
-  ].join(' / ')}`
-}
-
-function presentationToBullet(slot: PresentationSlot) {
-  return `${slot.order}. ${slot.teamName} (${slot.members.join(' / ')})`
+function statusTone(status: LaunchStatus) {
+  switch (status) {
+    case '완료':
+      return 'green'
+    case '등록 후 승인 대기중':
+    case '등록 완료':
+    case '제작 진행중':
+    case '제작 가능':
+      return 'blue'
+    case '서지정보 대기중':
+    case '원고 대기중':
+    case '표지 대기중':
+      return 'amber'
+    default:
+      return 'slate'
+  }
 }
 
 function App() {
-  const [form, setForm] = useState<FormState>(() => {
-    const stored = window.localStorage.getItem(STORAGE_KEY)
-    if (!stored) return DEFAULT_FORM
-
-    try {
-      return { ...DEFAULT_FORM, ...JSON.parse(stored) }
-    } catch {
-      return DEFAULT_FORM
-    }
-  })
-  const [result, setResult] = useState<DashboardResult | null>(null)
-  const [error, setError] = useState<string>('')
-  const [copied, setCopied] = useState<string>('')
+  const [records, setRecords] = useState<LaunchRecord[]>(() => readStoredRecords())
+  const [today, setToday] = useState(getTodayIsoDate())
+  const [labelFilter, setLabelFilter] = useState('전체')
+  const [statusFilter, setStatusFilter] = useState<'전체' | LaunchStatus>('전체')
+  const [modeFilter, setModeFilter] = useState<FilterMode>('전체')
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
+  const [copiedBundleAssignee, setCopiedBundleAssignee] = useState<string | null>(null)
+  const [copiedAllReminderBundles, setCopiedAllReminderBundles] = useState(false)
+  const [teamsConfig, setTeamsConfig] = useState<TeamsSyncConfig>(() => readStoredTeamsConfig())
+  const [reminderPolicy, setReminderPolicy] = useState<ReminderPolicy>(() => readStoredReminderPolicy())
+  const [syncSummary, setSyncSummary] = useState<SyncRunSummary | null>(() => readStoredSyncSummary())
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>('확인 중')
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle')
+  const [syncMessage, setSyncMessage] = useState(
+    'Teams 동기화로 론칭 타래 현황을 현재 표로 가져올 수 있습니다.',
+  )
+  const [automationState, setAutomationState] = useState<TeamsAutomationState>(DEFAULT_AUTOMATION_STATE)
+  const [automationStatus, setAutomationStatus] = useState<SyncStatus>('idle')
+  const [automationMessage, setAutomationMessage] = useState('Teams 자동 알림은 아직 설정되지 않았습니다.')
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(form))
-  }, [form])
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(records))
+  }, [records])
 
-  const handleChange = (key: keyof FormState, value: string) => {
-    setForm((current) => ({
-      ...current,
-      [key]: key === 'teamCount' || key === 'minTotalTeamSize' || key === 'seed' ? Number(value) : value,
-    }))
-  }
+  useEffect(() => {
+    persistTeamsConfig(teamsConfig)
+  }, [teamsConfig])
 
-  const handleToggleSeedLock = (checked: boolean) => {
-    setForm((current) => ({
-      ...current,
-      lockSeed: checked,
-    }))
-  }
+  useEffect(() => {
+    persistReminderPolicy(reminderPolicy)
+  }, [reminderPolicy])
 
-  const handleGenerate = () => {
-    try {
-      const effectiveSeed = form.lockSeed ? Number(form.seed) : generateRandomSeed()
-      const built = buildTeams(form, effectiveSeed)
-      if (!form.lockSeed) {
-        setForm((current) => ({
-          ...current,
-          seed: effectiveSeed,
-        }))
+  useEffect(() => {
+    persistSyncSummary(syncSummary)
+  }, [syncSummary])
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        await getTeamsHealth()
+        setBackendStatus('연결됨')
+      } catch {
+        setBackendStatus('미연결')
       }
-      setResult(built)
-      setError('')
-    } catch (buildError) {
-      setResult(null)
-      setError(buildError instanceof Error ? buildError.message : '팀 편성 중 오류가 발생했습니다.')
+
+      try {
+        const result = await getTeamsAutomation()
+        setAutomationState(result.automation)
+        setAutomationMessage(result.automation.lastRunMessage)
+        setReminderPolicy((current) =>
+          normalizeReminderPolicy({
+            ...current,
+            leadBusinessDays: result.automation.leadBusinessDays,
+          }),
+        )
+        setTeamsConfig((current) => ({
+          ...current,
+          ...result.automation.teamsConfig,
+          clientSecret: current.clientSecret,
+        }))
+      } catch {
+        setAutomationMessage('자동 알림 설정 정보를 아직 불러오지 못했습니다.')
+      }
+    })()
+  }, [])
+
+  const summary = useMemo(
+    () => summarizeLaunches(records, today, reminderPolicy),
+    [records, reminderPolicy, today],
+  )
+  const reminderGroups = useMemo(
+    () => groupReminderTargetsByAssignee(summary.reminderTargets),
+    [summary.reminderTargets],
+  )
+
+  const availableLabels = useMemo(
+    () => ['전체', ...new Set(records.map((record) => record.label))],
+    [records],
+  )
+
+  const filteredRows = useMemo(() => {
+    return summary.rows.filter((row) => {
+      if (labelFilter !== '전체' && row.label !== labelFilter) return false
+      if (statusFilter !== '전체' && row.status !== statusFilter) return false
+      if (modeFilter === '리마인드 필요' && !row.reminderNeeded) return false
+      if (modeFilter === '완료 제외' && row.status === '완료') return false
+      return true
+    })
+  }, [labelFilter, modeFilter, statusFilter, summary.rows])
+
+  const updateRecord = <K extends keyof LaunchRecord>(id: string, key: K, value: LaunchRecord[K]) => {
+    setRecords((current) =>
+      current.map((record) => (record.id === id ? { ...record, [key]: value } : record)),
+    )
+  }
+
+  const updateTeamsConfig = <K extends keyof TeamsSyncConfig>(key: K, value: TeamsSyncConfig[K]) => {
+    setTeamsConfig((current) => ({ ...current, [key]: value }))
+  }
+
+  const updateReminderPolicy = <K extends keyof ReminderPolicy>(key: K, value: ReminderPolicy[K]) => {
+    setReminderPolicy((current) => normalizeReminderPolicy({ ...current, [key]: value }))
+  }
+
+  const updateAutomationField = <K extends keyof TeamsAutomationState>(key: K, value: TeamsAutomationState[K]) => {
+    setAutomationState((current) => ({ ...current, [key]: value }))
+  }
+
+  const applyAutomationState = (nextState: TeamsAutomationState) => {
+    setAutomationState(nextState)
+    setReminderPolicy((current) =>
+      normalizeReminderPolicy({
+        ...current,
+        leadBusinessDays: nextState.leadBusinessDays,
+      }),
+    )
+  }
+
+  const toggleBoolean = (id: string, key: EditableBooleanKey) => {
+    setRecords((current) =>
+      current.map((record) =>
+        record.id === id ? { ...record, [key]: !record[key] } : record,
+      ),
+    )
+  }
+
+  const copyReminder = async (id: string) => {
+    const record = records.find((item) => item.id === id)
+    if (!record) return
+
+    await navigator.clipboard.writeText(buildReminderMessage(record, today))
+    setCopiedMessageId(id)
+    window.setTimeout(() => setCopiedMessageId((current) => (current === id ? null : current)), 1800)
+  }
+
+  const copyAssigneeReminderBundle = async (assignee: string) => {
+    const group = reminderGroups.find((item) => item.assignee === assignee)
+    if (!group) return
+
+    await navigator.clipboard.writeText(buildAssigneeReminderMessage(group, summary.reminderTargets))
+    setCopiedBundleAssignee(assignee)
+    window.setTimeout(
+      () => setCopiedBundleAssignee((current) => (current === assignee ? null : current)),
+      1800,
+    )
+  }
+
+  const copyAllReminderBundles = async () => {
+    if (summary.reminderTargets.length === 0) return
+
+    await navigator.clipboard.writeText(buildAllReminderMessages(summary.reminderTargets))
+    setCopiedAllReminderBundles(true)
+    window.setTimeout(() => setCopiedAllReminderBundles(false), 1800)
+  }
+
+  const runTeamsSync = async () => {
+    setSyncStatus('loading')
+    setSyncMessage('Teams 동기화를 실행해 론칭 타래와 답글을 불러오는 중입니다...')
+
+    try {
+      const result: TeamsSyncResponse = await syncTeamsThreads(teamsConfig)
+      const nextSyncSummary = buildSyncSnapshot(result)
+      setRecords(result.records as LaunchRecord[])
+      setSyncSummary(nextSyncSummary)
+      setSyncStatus('success')
+      setSyncMessage(formatSyncRunSummary(nextSyncSummary))
+    } catch (error) {
+      setSyncStatus('error')
+      setSyncMessage(error instanceof Error ? error.message : 'Teams 동기화에 실패했습니다.')
     }
   }
 
-  const handleReset = () => {
-    setForm(DEFAULT_FORM)
-    setResult(null)
-    setError('')
-    setCopied('')
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_FORM))
+  const saveAutomationConfig = async () => {
+    setAutomationStatus('loading')
+    setAutomationMessage('Teams 자동 알림 설정을 저장하는 중입니다...')
+
+    try {
+      const result = await saveTeamsAutomation({
+        enabled: automationState.enabled,
+        webhookUrl: automationState.webhookUrl,
+        intervalMinutes: automationState.intervalMinutes,
+        leadBusinessDays: reminderPolicy.leadBusinessDays,
+        teamsConfig,
+      })
+      applyAutomationState(result.automation)
+      setAutomationStatus('success')
+      setAutomationMessage(result.message)
+    } catch (error) {
+      setAutomationStatus('error')
+      setAutomationMessage(error instanceof Error ? error.message : '자동 알림 설정 저장에 실패했습니다.')
+    }
   }
 
-  const copyText = async (label: string, text: string) => {
-    await navigator.clipboard.writeText(text)
-    setCopied(label)
-    window.setTimeout(() => setCopied(''), 1800)
-  }
+  const runAutomationNow = async () => {
+    setAutomationStatus('loading')
+    setAutomationMessage('Teams 자동 알림을 즉시 1회 실행하는 중입니다...')
 
-  const shareText = result
-    ? [
-        '[AX 해커톤 팀 편성안]',
-        '',
-        '1. 팀 편성 결과',
-        ...result.teams.map(teamToBullet),
-        '',
-        '2. 추천 발표 순서',
-        ...result.presentationOrder.map(presentationToBullet),
-      ].join('\n')
-    : ''
+    try {
+      const result: TeamsAutomationRunResponse = await runTeamsAutomation({ force: true })
+      const nextSyncSummary = buildSyncSnapshot(result)
+      setRecords(result.records as LaunchRecord[])
+      setSyncSummary(nextSyncSummary)
+      applyAutomationState(result.automation)
+      setAutomationStatus('success')
+      setAutomationMessage(result.message)
+    } catch (error) {
+      setAutomationStatus('error')
+      setAutomationMessage(error instanceof Error ? error.message : '자동 알림 실행에 실패했습니다.')
+    }
+  }
 
   return (
-    <div className="app-shell">
+    <div className="launch-app">
       <header className="hero-card">
         <div>
-          <p className="eyebrow">AX Hackathon Dashboard</p>
-          <h1>팀 자동편성 + 발표 순서 추천 대시보드</h1>
+          <p className="eyebrow">AX 해커톤 · 론칭 운영 1차</p>
+          <h1>론칭 타래 현황 대시보드</h1>
           <p className="hero-copy">
-            개발자 1명, 콘텐츠유통팀 1명, 콘본 혼합 배치 규칙을 반영해서 바로 결과를 뽑고,
-            스레드 공유용 문구까지 복사할 수 있게 만들었습니다.
+            Teams 론칭 타래를 읽어와 작품 일정·준비물·리마인드 대상을 한 화면에서 보고,
+            위험 건은 Teams 채널로 자동 발송까지 이어지게 만든 운영 대시보드입니다.
           </p>
+          <div className="hero-meta">
+            <label>
+              기준일
+              <input type="date" value={today} onChange={(event) => setToday(event.target.value)} />
+            </label>
+            <button className="secondary-button" onClick={() => setRecords(SAMPLE_RECORDS)} type="button">
+              샘플 데이터로 초기화
+            </button>
+          </div>
         </div>
         <div className="hero-metrics">
-          <div className="metric-card">
-            <span>팀 수</span>
-            <strong>{form.teamCount}</strong>
-          </div>
-          <div className="metric-card">
-            <span>최소 팀 인원</span>
-            <strong>{form.minTotalTeamSize}</strong>
-          </div>
-          <div className="metric-card accent">
-            <span>시드</span>
-            <strong>{form.seed}</strong>
-          </div>
+          <article className="metric-card accent">
+            <span>전체 작품</span>
+            <strong>{summary.rows.length}</strong>
+          </article>
+          <article className="metric-card danger">
+            <span>{reminderPolicy.leadBusinessDays}영업일 이내 리마인드</span>
+            <strong>{summary.reminderTargets.length}</strong>
+          </article>
+          <article className="metric-card">
+            <span>완료</span>
+            <strong>{summary.statusCounts['완료']}</strong>
+          </article>
+          <article className="metric-card">
+            <span>승인 대기</span>
+            <strong>{summary.statusCounts['등록 후 승인 대기중']}</strong>
+          </article>
         </div>
       </header>
 
-      <main className="content-grid">
-        <section className="panel panel-primary">
+      <section className="content-grid">
+        <section className="panel panel-full readonly-panel">
+          <div className="panel-header compact">
+            <div>
+              <h2>오늘 구현 범위</h2>
+              <p>Teams 론칭 타래를 읽어와 현황판에 반영하고, 위험 건을 Teams 채널로 자동 알림 발송하는 흐름까지 한 번에 다룹니다.</p>
+            </div>
+          </div>
+          <div className="readonly-bullets">
+            <span>가능: 타래 본문 읽기</span>
+            <span>가능: 답글/이모지 기반 상태 파악</span>
+            <span>가능: 마감 임박 현황 표시</span>
+            <span>가능: Teams 웹훅 자동 알림 발송</span>
+          </div>
+        </section>
+
+        <section className="panel panel-full settings-panel">
+          <div className="panel-header compact">
+            <div>
+              <h2>리마인드 설정</h2>
+              <p>지금은 로컬 저장 기준이지만, 몇 영업일 전부터 위험 건으로 볼지 바로 조절할 수 있게 열어뒀습니다.</p>
+            </div>
+          </div>
+          <div className="settings-grid-inline">
+            <label>
+              리마인드 시작 기준
+              <select
+                value={reminderPolicy.leadBusinessDays}
+                onChange={(event) => updateReminderPolicy('leadBusinessDays', Number(event.target.value) || 3)}
+              >
+                {Array.from({ length: 10 }, (_, index) => index + 1).map((days) => (
+                  <option key={days} value={days}>
+                    마감 {days}영업일 전부터
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="policy-summary-card">
+              <strong>현재 기준</strong>
+              <span>등록 완료가 되지 않았고</span>
+              <span>등록 마감까지 {reminderPolicy.leadBusinessDays}영업일 이하인 작품</span>
+            </div>
+          </div>
+        </section>
+
+        <div className="panel panel-primary">
           <div className="panel-header">
             <div>
-              <h2>편성 조건 입력</h2>
-              <p>복붙 기준으로 콤마 또는 줄바꿈 모두 인식합니다.</p>
-            </div>
-            <div className="button-row">
-              <button className="secondary-button" onClick={handleReset} type="button">
-                기본값 복원
-              </button>
-              <button className="primary-button" onClick={handleGenerate} type="button">
-                팀 편성 실행
-              </button>
+              <h2>위험 건 현황</h2>
+              <p>
+                등록 마감일까지 {reminderPolicy.leadBusinessDays}영업일 이하인데 아직 등록 완료가 되지 않은 작품만
+                따로 보여줍니다.
+              </p>
             </div>
           </div>
 
-          <div className="settings-grid">
+          <div className="alert-stack">
+            {summary.reminderTargets.length === 0 ? (
+              <div className="empty-state">현재 기준일 기준으로 리마인드 대상이 없습니다.</div>
+            ) : (
+              summary.reminderTargets.map((row) => (
+                <article className="alert-card" key={row.id}>
+                  <div className="alert-card-head">
+                    <div>
+                      <p className="alert-title">{row.title}</p>
+                      <p className="alert-subtitle">
+                        {row.label} · {row.platform} · {row.assignee}
+                      </p>
+                    </div>
+                    <span className={`status-pill ${statusTone(row.status)}`}>{row.status}</span>
+                  </div>
+                  <dl className="alert-grid">
+                    <div>
+                      <dt>출간일</dt>
+                      <dd>{formatDisplayDate(row.releaseDate)}</dd>
+                    </div>
+                    <div>
+                      <dt>등록 마감일</dt>
+                      <dd>{formatDisplayDate(row.registrationDeadline)}</dd>
+                    </div>
+                    <div>
+                      <dt>남은 영업일</dt>
+                      <dd>{row.businessDaysLeft ?? '미정'}</dd>
+                    </div>
+                    <div>
+                      <dt>차단 단계</dt>
+                      <dd>{row.status}</dd>
+                    </div>
+                  </dl>
+                  <div className="button-row">
+                    <a className="link-button" href={row.launchThreadUrl} rel="noreferrer" target="_blank">
+                      타래 열기
+                    </a>
+                    <button className="secondary-button" onClick={() => copyReminder(row.id)} type="button">
+                      {copiedMessageId === row.id ? '알림 문구 복사됨' : '알림 문구 복사'}
+                    </button>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </div>
+
+        <aside className="panel panel-side">
+          <div className="panel-header compact">
+            <div>
+              <h2>상태 요약</h2>
+              <p>병목이 어디에 몰리는지 바로 볼 수 있게 상태별 건수를 나눴습니다.</p>
+            </div>
+          </div>
+          <div className="status-summary-list">
+            {Object.entries(summary.statusCounts).map(([status, count]) => (
+              <div className="status-summary-item" key={status}>
+                <span className={`status-pill ${statusTone(status as LaunchStatus)}`}>{status}</span>
+                <strong>{count}</strong>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        <aside className="panel panel-side">
+          <div className="panel-header compact">
+            <div>
+              <h2>담당자별 리마인드</h2>
+              <p>누가 먼저 챙겨야 하는지 담당자 기준으로 급한 순서대로 묶어 보여줍니다.</p>
+            </div>
+            <button
+              className="secondary-button reminder-bulk-button"
+              disabled={reminderGroups.length === 0}
+              onClick={copyAllReminderBundles}
+              type="button"
+            >
+              {copiedAllReminderBundles ? '전체 리마인드 복사됨' : '전체 리마인드 복사'}
+            </button>
+          </div>
+          <div className="status-summary-list">
+            {reminderGroups.length === 0 ? (
+              <div className="empty-state">현재 기준일 기준으로 담당자 리마인드 대상이 없습니다.</div>
+            ) : (
+              reminderGroups.map((group) => (
+                <div className="reminder-group-card" key={group.assignee}>
+                  <div className="reminder-group-head">
+                    <strong>{group.assignee}</strong>
+                    <span className="mini-pill danger">{group.count}건</span>
+                  </div>
+                  <p>
+                    가장 급한 건 {group.minBusinessDaysLeft ?? '미정'}영업일 · {group.titles.join(' / ')}
+                  </p>
+                  <button
+                    className="secondary-button reminder-bundle-button"
+                    onClick={() => copyAssigneeReminderBundle(group.assignee)}
+                    type="button"
+                  >
+                    {copiedBundleAssignee === group.assignee ? '담당자 묶음 문구 복사됨' : '담당자 묶음 문구 복사'}
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </aside>
+
+        <section className="panel panel-full">
+          <div className="panel-header">
+            <div>
+              <h2>Teams 연동 설정</h2>
+              <p>Microsoft Graph 앱 정보를 넣고 동기화를 누르면 Teams 론칭 타래를 읽어와 현재 현황표로 반영합니다.</p>
+            </div>
+            <span className={`mini-pill ${backendStatus === '연결됨' ? 'safe' : 'danger'}`}>
+              동기화 서버 {backendStatus}
+            </span>
+          </div>
+
+          <div className="teams-grid">
             <label>
-              <span>팀 수</span>
+              Tenant ID
+              <input
+                type="text"
+                value={teamsConfig.tenantId}
+                onChange={(event) => updateTeamsConfig('tenantId', event.target.value)}
+                placeholder="Microsoft Entra tenant ID"
+              />
+            </label>
+            <label>
+              Client ID
+              <input
+                type="text"
+                value={teamsConfig.clientId}
+                onChange={(event) => updateTeamsConfig('clientId', event.target.value)}
+                placeholder="앱 등록 client ID"
+              />
+            </label>
+            <label>
+              Client Secret
+              <input
+                type="password"
+                value={teamsConfig.clientSecret}
+                onChange={(event) => updateTeamsConfig('clientSecret', event.target.value)}
+                placeholder={automationState.hasClientSecret ? '비워두면 서버 저장값 유지' : '이번 실행/자동 발송에 사용'}
+              />
+            </label>
+            <label>
+              Team ID
+              <input
+                type="text"
+                value={teamsConfig.teamId}
+                onChange={(event) => updateTeamsConfig('teamId', event.target.value)}
+                placeholder="Teams 팀 ID"
+              />
+            </label>
+            <label>
+              Channel ID
+              <input
+                type="text"
+                value={teamsConfig.channelId}
+                onChange={(event) => updateTeamsConfig('channelId', event.target.value)}
+                placeholder="론칭 타래가 있는 채널 ID"
+              />
+            </label>
+            <label>
+              조회 개수
               <input
                 type="number"
                 min={1}
-                value={form.teamCount}
-                onChange={(event) => handleChange('teamCount', event.target.value)}
-              />
-            </label>
-            <label>
-              <span>최소 팀 인원</span>
-              <input
-                type="number"
-                min={3}
-                value={form.minTotalTeamSize}
-                onChange={(event) => handleChange('minTotalTeamSize', event.target.value)}
-              />
-            </label>
-            <label>
-              <span>시드</span>
-              <input
-                type="number"
-                value={form.seed}
-                onChange={(event) => handleChange('seed', event.target.value)}
-              />
-            </label>
-            <label className="checkbox-field">
-              <span>시드 고정</span>
-              <div className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={form.lockSeed}
-                  onChange={(event) => handleToggleSeedLock(event.target.checked)}
-                />
-                <small>
-                  끄면 실행할 때마다 새 시드로 다시 추첨되고, 켜면 같은 시드값으로 동일 결과를 재현합니다.
-                </small>
-              </div>
-            </label>
-          </div>
-
-          <div className="textarea-stack">
-            <label>
-              <span>개발자 명단</span>
-              <textarea
-                rows={3}
-                value={form.developers}
-                onChange={(event) => handleChange('developers', event.target.value)}
-              />
-            </label>
-            <label>
-              <span>콘텐츠유통팀 명단</span>
-              <textarea
-                rows={3}
-                value={form.distributionMembers}
-                onChange={(event) => handleChange('distributionMembers', event.target.value)}
-              />
-            </label>
-            <label>
-              <span>콘텐츠본부 명단</span>
-              <textarea
-                rows={5}
-                value={form.contentBaseMembers}
-                onChange={(event) => handleChange('contentBaseMembers', event.target.value)}
+                max={200}
+                value={teamsConfig.limit}
+                onChange={(event) => updateTeamsConfig('limit', Number(event.target.value) || 50)}
               />
             </label>
           </div>
-        </section>
 
-        <section className="panel panel-side">
-          <div className="panel-header compact">
-            <div>
-              <h2>제약 조건</h2>
-              <p>특정 인원 분리, 특정 콘본 전용 팀 규칙을 여기서 제어합니다.</p>
+          <div className="teams-actions">
+            <button className="link-button" disabled={syncStatus === 'loading'} onClick={runTeamsSync} type="button">
+              {syncStatus === 'loading' ? 'Teams 읽는 중...' : 'Teams 현황 불러오기'}
+            </button>
+            <p className={`sync-message ${syncStatus}`}>{syncMessage}</p>
+          </div>
+
+          <div className="sync-meta-grid">
+            <div className="sync-meta-card">
+              <strong>마지막 동기화</strong>
+              <span>{formatSyncTimestamp(syncSummary?.lastSyncedAt ?? null)}</span>
+            </div>
+            <div className="sync-meta-card">
+              <strong>최근 반영 결과</strong>
+              <span>
+                {syncSummary ? formatSyncRunSummary(syncSummary) : '아직 동기화 결과가 없습니다'}
+              </span>
             </div>
           </div>
-
-          <div className="textarea-stack">
-            <label>
-              <span>제외 인원</span>
-              <textarea
-                rows={2}
-                value={form.excludedMembers}
-                onChange={(event) => handleChange('excludedMembers', event.target.value)}
-              />
-            </label>
-            <label>
-              <span>같은 팀 금지 인원 (줄바꿈마다 별도 그룹)</span>
-              <textarea
-                rows={3}
-                value={form.separateMembers}
-                onChange={(event) => handleChange('separateMembers', event.target.value)}
-              />
-            </label>
-            <label>
-              <span>전용 팀 허용 개발자</span>
-              <textarea
-                rows={3}
-                value={form.restrictedDevelopers}
-                onChange={(event) => handleChange('restrictedDevelopers', event.target.value)}
-              />
-            </label>
-            <label>
-              <span>위 개발자 팀에만 들어갈 수 있는 콘본</span>
-              <textarea
-                rows={3}
-                value={form.restrictedContentBase}
-                onChange={(event) => handleChange('restrictedContentBase', event.target.value)}
-              />
-            </label>
-          </div>
         </section>
 
-        <section className="panel panel-full result-panel">
+        <section className="panel panel-full automation-panel">
           <div className="panel-header">
             <div>
-              <h2>편성 결과</h2>
-              <p>조건을 충족하는 팀 편성과 추천 발표 순서를 한 번에 확인합니다.</p>
+              <h2>Teams 자동 알림 발송</h2>
+              <p>위험 건을 Teams 채널 웹훅으로 자동 발송합니다. 같은 대상이면 중복 발송을 자동으로 건너뜁니다.</p>
             </div>
-            <div className="button-row">
-              <button
-                className="secondary-button"
-                onClick={() => copyText('팀 편성안', shareText)}
-                type="button"
-                disabled={!result}
+            <span className={`mini-pill ${automationState.enabled ? 'safe' : 'danger'}`}>
+              자동 발송 {automationState.enabled ? '켜짐' : '꺼짐'}
+            </span>
+          </div>
+
+          <div className="teams-grid automation-grid">
+            <label>
+              Teams 웹훅 URL
+              <input
+                type="password"
+                value={automationState.webhookUrl}
+                onChange={(event) => updateAutomationField('webhookUrl', event.target.value)}
+                placeholder={automationState.hasWebhookUrl ? '비워두면 서버 저장 웹훅 유지' : 'Teams Incoming Webhook / Workflow URL'}
+              />
+            </label>
+            <label>
+              자동 발송 사용
+              <select
+                value={automationState.enabled ? '켜기' : '끄기'}
+                onChange={(event) => updateAutomationField('enabled', event.target.value === '켜기')}
               >
-                스레드용 복사
-              </button>
+                <option value="끄기">끄기</option>
+                <option value="켜기">켜기</option>
+              </select>
+            </label>
+            <label>
+              실행 주기(분)
+              <input
+                type="number"
+                min={5}
+                max={1440}
+                value={automationState.intervalMinutes}
+                onChange={(event) => updateAutomationField('intervalMinutes', Number(event.target.value) || 30)}
+              />
+            </label>
+            <label>
+              리마인드 기준
+              <select
+                value={reminderPolicy.leadBusinessDays}
+                onChange={(event) => {
+                  const nextLeadDays = Number(event.target.value) || 3
+                  updateReminderPolicy('leadBusinessDays', nextLeadDays)
+                  updateAutomationField('leadBusinessDays', nextLeadDays)
+                }}
+              >
+                {Array.from({ length: 10 }, (_, index) => index + 1).map((days) => (
+                  <option key={`automation-${days}`} value={days}>
+                    등록 마감 {days}영업일 전부터
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="teams-actions automation-actions">
+            <button className="link-button" disabled={automationStatus === 'loading'} onClick={saveAutomationConfig} type="button">
+              {automationStatus === 'loading' ? '자동 알림 저장 중...' : '자동 알림 설정 저장'}
+            </button>
+            <button className="secondary-button" disabled={automationStatus === 'loading'} onClick={runAutomationNow} type="button">
+              지금 1회 발송
+            </button>
+            <p className={`sync-message ${automationStatus}`}>{automationMessage}</p>
+          </div>
+
+          <div className="sync-meta-grid">
+            <div className="sync-meta-card">
+              <strong>최근 자동 실행</strong>
+              <span>{formatSyncTimestamp(automationState.lastRunAt)}</span>
+            </div>
+            <div className="sync-meta-card">
+              <strong>최근 발송 결과</strong>
+              <span>{automationState.lastRunMessage}</span>
+            </div>
+            <div className="sync-meta-card">
+              <strong>최근 실제 발송 시각</strong>
+              <span>{formatSyncTimestamp(automationState.lastSentAt)}</span>
+            </div>
+            <div className="sync-meta-card">
+              <strong>최근 발송 건수</strong>
+              <span>{automationState.lastSentCount > 0 ? `${automationState.lastSentCount}건` : '아직 발송 없음'}</span>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel panel-full">
+          <div className="panel-header">
+            <div>
+              <h2>작품 일정 관리 표</h2>
+              <p>체크박스를 바꾸면 현재 단계와 리마인드 대상이 즉시 다시 계산됩니다.</p>
+            </div>
+            <div className="filter-row">
+              <label>
+                레이블
+                <select value={labelFilter} onChange={(event) => setLabelFilter(event.target.value)}>
+                  {availableLabels.map((label) => (
+                    <option key={label} value={label}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                상태
+                <select
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value as '전체' | LaunchStatus)}
+                >
+                  {STATUS_OPTIONS.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                보기
+                <select
+                  value={modeFilter}
+                  onChange={(event) => setModeFilter(event.target.value as FilterMode)}
+                >
+                  {FILTER_OPTIONS.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {mode}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
           </div>
 
-          {copied ? <div className="notice success">{copied} 복사 완료</div> : null}
-          {error ? <div className="notice error">{error}</div> : null}
-
-          {!result && !error ? (
-            <div className="empty-state">
-              <p>아직 결과가 없습니다. 오른쪽 상단의 “팀 편성 실행” 버튼을 눌러주세요.</p>
-            </div>
-          ) : null}
-
-          {result ? (
-            <div className="result-stack">
-              <div className="explanation-list">
-                {result.explanation.map((line) => (
-                  <div className="explanation-item" key={line}>
-                    {line}
-                  </div>
+          <div className="table-wrap">
+            <table className="launch-table">
+              <thead>
+                <tr>
+                  <th>작품</th>
+                  <th>기본 정보</th>
+                  <th>일정</th>
+                  <th>현재 단계</th>
+                  <th>준비 체크</th>
+                  <th>마감 체크</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRows.map((row) => (
+                  <tr key={row.id}>
+                    <td>
+                      <div className="title-cell">
+                        <strong>{row.title}</strong>
+                        <span>{row.author}</span>
+                        <small>{row.note || '메모 없음'}</small>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="meta-stack">
+                        <span>{row.label}</span>
+                        <span>{row.assignee || '담당자 미입력'}</span>
+                        <span>
+                          {row.platform} · {row.format}
+                        </span>
+                        <a href={row.launchThreadUrl} rel="noreferrer" target="_blank">
+                          Teams 타래
+                        </a>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="date-stack">
+                        <label>
+                          출간일
+                          <input
+                            type="date"
+                            value={row.releaseDate}
+                            onChange={(event) => updateRecord(row.id, 'releaseDate', event.target.value)}
+                          />
+                        </label>
+                        <div className="date-chip">등록 마감 {formatDisplayDate(row.registrationDeadline)}</div>
+                        <div className={`deadline-chip ${row.reminderNeeded ? 'danger' : 'normal'}`}>
+                          {row.businessDaysLeft === null ? '일정 미정' : `남은 영업일 ${row.businessDaysLeft}일`}
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="status-cell">
+                        <span className={`status-pill ${statusTone(row.status)}`}>{row.status}</span>
+                        <span className={`mini-pill ${row.reminderNeeded ? 'danger' : 'safe'}`}>
+                          {row.reminderNeeded ? '리마인드 필요' : '정상'}
+                        </span>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="check-grid">
+                        <label>
+                          <input
+                            checked={row.bibliographicReady}
+                            onChange={() => toggleBoolean(row.id, 'bibliographicReady')}
+                            type="checkbox"
+                          />
+                          서지
+                        </label>
+                        <label>
+                          <input
+                            checked={row.manuscriptReady}
+                            onChange={() => toggleBoolean(row.id, 'manuscriptReady')}
+                            type="checkbox"
+                          />
+                          원고
+                        </label>
+                        <label>
+                          <input
+                            checked={row.coverReady}
+                            onChange={() => toggleBoolean(row.id, 'coverReady')}
+                            type="checkbox"
+                          />
+                          표지
+                        </label>
+                        <label>
+                          <input
+                            checked={row.productionStarted}
+                            onChange={() => toggleBoolean(row.id, 'productionStarted')}
+                            type="checkbox"
+                          />
+                          제작 시작
+                        </label>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="check-grid">
+                        <label>
+                          <input
+                            checked={row.registered}
+                            onChange={() => toggleBoolean(row.id, 'registered')}
+                            type="checkbox"
+                          />
+                          등록 완료
+                        </label>
+                        <label>
+                          <input
+                            checked={row.approvalPending}
+                            onChange={() => toggleBoolean(row.id, 'approvalPending')}
+                            type="checkbox"
+                          />
+                          승인 대기
+                        </label>
+                        <label>
+                          <input
+                            checked={row.completed}
+                            onChange={() => toggleBoolean(row.id, 'completed')}
+                            type="checkbox"
+                          />
+                          완료 처리
+                        </label>
+                        <label>
+                          <input
+                            checked={row.thumbsUpComplete}
+                            onChange={() => toggleBoolean(row.id, 'thumbsUpComplete')}
+                            type="checkbox"
+                          />
+                          따봉 완료
+                        </label>
+                      </div>
+                    </td>
+                  </tr>
                 ))}
-              </div>
-
-              <div className="team-grid">
-                {result.teams.map((team) => {
-                  const members = [team.developer, team.distribution, ...team.contentBase]
-                  return (
-                    <article className="team-card" key={team.teamLabel} style={{ '--team-accent': team.accentColor } as CSSProperties}>
-                      <div className="team-card-head">
-                        <div>
-                          <p className="team-label">{team.teamLabel}</p>
-                          <h3>{team.teamName}</h3>
-                        </div>
-                        <span>{members.length}명</span>
-                      </div>
-                      <div className="team-name-meta">
-                        <span>{team.colorName}</span>
-                        <span>{team.foodName}</span>
-                      </div>
-                      <dl>
-                        <div>
-                          <dt>개발자</dt>
-                          <dd>{team.developer}</dd>
-                        </div>
-                        <div>
-                          <dt>콘텐츠유통팀</dt>
-                          <dd>{team.distribution}</dd>
-                        </div>
-                        <div>
-                          <dt>콘텐츠본부</dt>
-                          <dd>{team.contentBase.join(', ')}</dd>
-                        </div>
-                      </dl>
-                    </article>
-                  )
-                })}
-              </div>
-
-              <div className="presentation-card">
-                <div className="presentation-head">
-                  <h3>추천 발표 순서</h3>
-                </div>
-                <ol className="presentation-list">
-                  {result.presentationOrder.map((slot) => (
-                    <li key={slot.order}>
-                      <div className="presentation-order">{slot.order}</div>
-                      <div>
-                        <strong>{slot.teamName}</strong>
-                        <p>{slot.members.join(' / ')}</p>
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            </div>
-          ) : null}
+              </tbody>
+            </table>
+          </div>
         </section>
-      </main>
+      </section>
     </div>
   )
 }
