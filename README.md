@@ -37,7 +37,15 @@ TEAMS_SETUP.md               Teams 연동 설정 안내
 npm install
 ```
 
-### 2. Teams 동기화·자동 알림 서버 실행
+### 2. 서버 환경설정 준비
+
+```bash
+cp .env.example .env.local
+```
+
+`.env.local`의 `TEAMS_CLIENT_SECRET`에만 실제 Secret Value를 입력합니다. Teams Workflow를 만든 뒤에는 `TEAMS_WEBHOOK_URL`도 같은 파일에 입력합니다. 이 파일은 Git에 포함되지 않습니다.
+
+### 3. Teams 동기화·자동 알림 서버 실행
 
 ```bash
 npm run server
@@ -45,7 +53,7 @@ npm run server
 
 기본 주소는 `http://127.0.0.1:8787`입니다.
 
-### 3. 프론트엔드 실행
+### 4. 프론트엔드 실행
 
 별도 터미널에서 실행합니다.
 
@@ -82,9 +90,9 @@ npm run build
 ## 보안 주의사항
 
 - Client Secret과 Webhook URL을 Git에 커밋하지 않습니다.
-- 로컬 자동화 설정 파일 `server/.teams-automation-state.json`은 Git에서 제외됩니다.
-- 실제 운영 시에는 비밀값을 서버 환경변수 또는 별도 비밀 저장소에서 관리해야 합니다.
-- 브라우저에는 Client Secret 원문을 장기 저장하지 않습니다.
+- 비밀값은 Git에서 제외된 서버 전용 `.env.local`에만 저장합니다.
+- 브라우저는 Client Secret과 Webhook URL을 입력하거나 전달하지 않습니다.
+- 자동화 상태 파일 `server/.teams-automation-state.json`에는 비밀값을 기록하지 않습니다.
 
 ## 현재 운영상 제한
 

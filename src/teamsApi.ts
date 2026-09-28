@@ -84,7 +84,6 @@ export async function syncTeamsThreads(config: TeamsSyncConfig): Promise<TeamsSy
 
 export async function saveTeamsAutomation(payload: {
   enabled: boolean
-  webhookUrl: string
   intervalMinutes: number
   leadBusinessDays: number
   teamsConfig: TeamsSyncConfig
