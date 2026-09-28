@@ -6,9 +6,15 @@ import {
   runTeamsReminderAutomation,
   updateTeamsAutomationConfig,
 } from './teamsAutomation.mjs'
+import {
+  getMissingTeamsConfigKeys,
+  resolveTeamsRuntimeConfig,
+  toSafeRuntimeStatus,
+} from './teamsRuntimeConfig.mjs'
 import { syncTeamsLaunchThreads } from './teamsSync.mjs'
 
 const PORT = Number(process.env.TEAMS_SYNC_PORT || 8787)
+const runtimeConfig = resolveTeamsRuntimeConfig(process.env)
 
 function setCorsHeaders(response) {
   response.setHeader('Access-Control-Allow-Origin', '*')
@@ -47,15 +53,14 @@ function collectJsonBody(request) {
 }
 
 function validateConfig(config) {
-  const requiredKeys = ['tenantId', 'clientId', 'clientSecret', 'teamId', 'channelId']
-  const missing = requiredKeys.filter((key) => !config?.[key])
+  const missing = getMissingTeamsConfigKeys(config)
 
   if (missing.length > 0) {
     throw new Error(`필수 Teams 설정이 비어 있습니다: ${missing.join(', ')}`)
   }
 }
 
-await initializeTeamsAutomation()
+await initializeTeamsAutomation(runtimeConfig)
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', `http://${request.headers.host}`)
@@ -72,15 +77,17 @@ const server = createServer(async (request, response) => {
       ok: true,
       service: 'teams-sync-automation',
       port: PORT,
+      configuration: toSafeRuntimeStatus(runtimeConfig),
     })
     return
   }
 
   if (request.method === 'POST' && url.pathname === '/api/teams/sync') {
     try {
-      const config = await collectJsonBody(request)
-      validateConfig(config)
-      const summary = await syncTeamsLaunchThreads(config)
+      const requestConfig = await collectJsonBody(request)
+      const resolved = resolveTeamsRuntimeConfig(process.env, requestConfig)
+      validateConfig(resolved.teamsConfig)
+      const summary = await syncTeamsLaunchThreads(resolved.teamsConfig)
       sendJson(response, 200, {
         ok: true,
         ...summary,
@@ -105,7 +112,14 @@ const server = createServer(async (request, response) => {
   if (request.method === 'POST' && url.pathname === '/api/teams/automation') {
     try {
       const config = await collectJsonBody(request)
-      const automation = await updateTeamsAutomationConfig(config)
+      const resolved = resolveTeamsRuntimeConfig(process.env, config?.teamsConfig ?? {})
+      const automation = await updateTeamsAutomationConfig({
+        enabled: Boolean(config?.enabled),
+        intervalMinutes: config?.intervalMinutes,
+        leadBusinessDays: config?.leadBusinessDays,
+        webhookUrl: resolved.webhookUrl,
+        teamsConfig: resolved.teamsConfig,
+      })
       sendJson(response, 200, {
         ok: true,
         automation,

@@ -1,70 +1,96 @@
 # Teams 연동 안내
 
 ## 1. 현재 구현 범위
-- 이 버전은 **Teams 읽기 + 자동 알림 발송 1차 운영판**입니다.
-- Microsoft Graph 앱 자격증명으로 Teams 채널 메시지를 읽어옵니다.
-- 채널 안에서 **론칭 준비 타래** 형태의 메시지만 골라서 작품 표로 변환합니다.
-- 본문에서 아래 항목을 파싱합니다.
-  - 레이블
-  - 작가
-  - 제목
-  - 출간 일정
-  - 구분(연재/단행)
-  - 출간 플랫폼
-- 답글에서 아래 진행 신호를 읽습니다.
-  - 서지정보 완
-  - 원고 완
-  - 표지 완
-  - 제작 시작
-  - 등록 완료
-  - 승인 대기
-- 메시지 또는 답글에 `like` 반응이 있으면 `따봉 완료`로 처리합니다.
-- 위험 건은 **Teams 채널 웹훅**으로 자동 리마인드 발송할 수 있습니다.
 
-## 2. Microsoft Graph 앱 등록에 필요한 권한
-앱 등록 후 **Application permissions** 기준으로 아래 권한이 필요합니다.
+- Microsoft Graph 앱 자격증명으로 Teams 채널 메시지와 답글을 읽습니다.
+- 채널 안에서 론칭 준비 타래를 찾아 작품 정보와 진행 신호를 변환합니다.
+- 등록 마감 위험 건을 Teams Workflow/Webhook으로 자동 발송할 수 있습니다.
+- Client Secret과 Workflow URL은 브라우저가 아닌 서버 환경변수에서만 관리합니다.
+
+## 2. Microsoft Graph 앱 권한
+
+기존 Entra 앱에 다음 **Application permissions**와 관리자 동의가 필요합니다.
 
 - `ChannelMessage.Read.All`
 - `Team.ReadBasic.All`
 - `Channel.ReadBasic.All`
 
-권한 추가 후 **Grant admin consent**까지 완료해야 합니다.
+## 3. 테스트 대상
 
-## 3. 필요한 값
-대시보드의 **Teams 연동 설정** / **Teams 자동 알림 발송** 영역에 아래 값을 넣습니다.
+- 팀: `콘텐츠유통팀`
+- 채널: `[콘-서][01] 론칭 준비 타래`
+- Tenant ID: `c3fec124-ad4c-44f4-817b-049339aa4172`
+- Client ID: `ed4ba29a-14aa-4e50-b3cd-d90e95f81cf9`
+- Team ID: `70da08bc-c3a7-4b84-aac6-695fc70a410a`
+- Channel ID: `19:117b7d0f20a74fe19e02c67cf7501ef7@thread.skype`
 
-### Teams 읽기용
-- Tenant ID
-- Client ID
-- Client Secret
-- Team ID
-- Channel ID
-- 조회 개수
+위 식별자는 비밀번호가 아닙니다. Client Secret Value와 Workflow URL은 문서나 Git에 기록하지 않습니다.
 
-### 자동 알림 발송용
-- Teams Incoming Webhook 또는 Workflow Webhook URL
-- 자동 발송 사용 여부
-- 실행 주기(분)
-- 리마인드 기준 영업일
+## 4. 서버 환경설정
 
-## 4. 실행 방법
-### 프론트
+프로젝트 루트에서 예시 파일을 복사합니다.
+
+```bash
+cp .env.example .env.local
+```
+
+`.env.local`에 다음 변수를 사용합니다.
+
+```dotenv
+TEAMS_TENANT_ID=...
+TEAMS_CLIENT_ID=...
+TEAMS_CLIENT_SECRET=실제_Secret_Value
+TEAMS_TEAM_ID=...
+TEAMS_CHANNEL_ID=...
+TEAMS_SYNC_LIMIT=50
+TEAMS_WEBHOOK_URL=
+TEAMS_SYNC_PORT=8787
+```
+
+현재 `.env.example`과 로컬 `.env.local`에는 확인된 Tenant ID, Client ID, Team ID, Channel ID가 미리 반영되어 있습니다. 사용자는 로컬 `.env.local`의 `TEAMS_CLIENT_SECRET=` 뒤에 실제 Secret Value만 입력합니다.
+
+주의사항:
+
+- Secret ID가 아니라 Secret **Value**를 입력합니다.
+- `.env.local`은 Git에서 제외됩니다.
+- Client Secret과 Workflow URL을 대시보드 화면이나 Discord에 입력하지 않습니다.
+- 자동화 상태 파일에도 두 비밀값을 저장하지 않습니다.
+
+## 5. 실행 방법
+
+### 백엔드
+
 ```bash
 cd /home/viewcommz/hackathon-dashboard
 npm install
-npm run dev
-```
-
-### Teams 동기화/자동 알림 서버
-```bash
-cd /home/viewcommz/hackathon-dashboard
 npm run server
 ```
 
-기본 동기화 서버 주소는 `http://127.0.0.1:8787` 입니다.
+`npm run server`는 `.env.local`을 자동으로 읽습니다. 기본 주소는 `http://127.0.0.1:8787`입니다.
 
-## 5. 현재 파싱 규칙 예시
-### 본문 예시
+환경설정 상태 확인:
+
+```bash
+curl http://127.0.0.1:8787/api/teams/health
+```
+
+`configuration.configured`가 `true`이면 Graph 조회에 필요한 값이 모두 설정된 상태입니다.
+
+### 프론트엔드
+
+별도 터미널에서 실행합니다.
+
+```bash
+cd /home/viewcommz/hackathon-dashboard
+npm run dev
+```
+
+대시보드에서는 조회 개수, 자동 발송 사용 여부, 실행 주기, 리마인드 기준만 조절합니다. 비밀값 입력란은 없습니다.
+
+## 6. 파싱 규칙 예시
+
+### 본문
+
 ```text
 레이블: @에이블
 작가: 홍길동
@@ -74,7 +100,8 @@ npm run server
 출간 플랫폼: 카카오페이지
 ```
 
-### 답글 예시
+### 답글
+
 ```text
 서지정보, 표지 완입니다.
 원고 완입니다!
@@ -82,15 +109,24 @@ npm run server
 승인 대기 부탁드립니다.
 ```
 
-## 6. 자동 알림 동작 방식
-- 대시보드에서 **자동 알림 설정 저장**을 누르면 서버가 로컬 상태 파일에 설정을 저장합니다.
-- **자동 발송 사용=켜기** 상태면 서버가 설정한 주기마다 Teams를 다시 읽고 위험 건만 추려 웹훅으로 보냅니다.
-- 같은 작품/같은 단계 조합이면 중복 발송을 막기 위해 자동으로 생략합니다.
-- **지금 1회 발송** 버튼으로 즉시 테스트할 수 있습니다.
-- 서버는 `server/.teams-automation-state.json`에 자동 발송 설정과 최근 실행 결과를 기록합니다.
+메시지 또는 답글의 `like` 반응은 완료 신호로 처리합니다.
 
-## 7. 참고 사항
-- Client Secret은 브라우저 localStorage에 저장하지 않고, 서버 상태 파일에만 보관됩니다.
-- 웹훅 URL도 자동 발송을 위해 서버 상태 파일에 보관됩니다.
-- 서버가 꺼져 있으면 자동 발송도 함께 멈춥니다.
-- 더 고도화하려면 향후 Teams 봇/Graph 쓰기 권한 방식으로 확장할 수 있습니다.
+## 7. 자동 알림
+
+- `.env.local`의 `TEAMS_WEBHOOK_URL`에 테스트 채널 Workflow URL을 입력합니다.
+- 대시보드에서 자동 발송 사용 여부와 실행 주기를 저장합니다.
+- 서버는 설정 주기마다 Teams를 읽고 위험 건을 선별합니다.
+- 같은 대상 목록은 중복 발송을 생략합니다.
+- `지금 1회 발송`으로 테스트할 수 있습니다.
+- 현재 메시지의 담당자 이름은 일반 텍스트이며 실제 `@멘션` 구현은 후속 작업입니다.
+
+## 8. 운영 전 확인
+
+1. Client Secret 입력 후 health의 `configured=true` 확인
+2. 테스트 채널 타래 조회 성공 확인
+3. 테스트 채널 Workflow URL 설정
+4. 가상 D-3 작품 1건 발송 확인
+5. 반복 실행 중복 방지 확인
+6. 등록 완료 작품 제외 확인
+7. 담당자 계정 매핑과 실제 `@멘션` 구현
+8. 상시 실행 백엔드와 영구 상태 저장소 확정

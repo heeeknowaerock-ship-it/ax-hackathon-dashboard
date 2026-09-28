@@ -83,7 +83,7 @@ function normalizeAutomationState(input = {}, previous = DEFAULT_AUTOMATION_STAT
 function toSafeAutomationState(state = automationState) {
   return {
     enabled: state.enabled,
-    webhookUrl: state.webhookUrl,
+    webhookUrl: '',
     hasWebhookUrl: Boolean(state.webhookUrl),
     intervalMinutes: state.intervalMinutes,
     leadBusinessDays: state.leadBusinessDays,
@@ -100,16 +100,34 @@ function toSafeAutomationState(state = automationState) {
   }
 }
 
+export function buildPersistedAutomationState(state = automationState) {
+  return {
+    ...state,
+    webhookUrl: '',
+    teamsConfig: {
+      ...state.teamsConfig,
+      clientSecret: '',
+    },
+  }
+}
+
 async function persistAutomationState() {
   await mkdir(dirname(STATE_PATH), { recursive: true })
-  await writeFile(STATE_PATH, JSON.stringify(automationState, null, 2), 'utf-8')
+  await writeFile(STATE_PATH, JSON.stringify(buildPersistedAutomationState(), null, 2), 'utf-8')
 }
 
 async function loadAutomationState() {
   try {
     const raw = await readFile(STATE_PATH, 'utf-8')
     const parsed = JSON.parse(raw)
-    automationState = normalizeAutomationState(parsed)
+    automationState = normalizeAutomationState({
+      ...parsed,
+      webhookUrl: '',
+      teamsConfig: {
+        ...parsed.teamsConfig,
+        clientSecret: '',
+      },
+    })
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
       automationState = { ...DEFAULT_AUTOMATION_STATE }
@@ -374,8 +392,16 @@ async function postTeamsWebhook(webhookUrl, message) {
   return bodyText
 }
 
-export async function initializeTeamsAutomation() {
+export async function initializeTeamsAutomation(runtime = {}) {
   await loadAutomationState()
+  automationState = normalizeAutomationState(
+    {
+      ...automationState,
+      webhookUrl: runtime.webhookUrl || '',
+      teamsConfig: normalizeTeamsConfig(runtime.teamsConfig ?? {}, automationState.teamsConfig),
+    },
+    automationState,
+  )
   scheduleAutomationTimer()
   return toSafeAutomationState()
 }

@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 // @ts-ignore Vitest imports the Node ESM server module directly for automation tests.
-import { buildAutomationReminderText, selectReminderRows } from '../server/teamsAutomation.mjs'
+import {
+  buildAutomationReminderText,
+  buildPersistedAutomationState,
+  selectReminderRows,
+} from '../server/teamsAutomation.mjs'
 
 describe('teams automation reminders', () => {
   const records = [
@@ -87,6 +91,26 @@ describe('teams automation reminders', () => {
     expect(message).toContain('담당자: 희디')
     expect(message).toContain('현재 단계: 서지정보 대기중')
     expect(message).not.toContain('등록 완료 작품')
+  })
+
+  it('removes client secrets and webhook URLs before automation state is written to disk', () => {
+    const persisted = buildPersistedAutomationState({
+      enabled: true,
+      webhookUrl: 'https://example.invalid/private-webhook',
+      teamsConfig: {
+        tenantId: 'tenant',
+        clientId: 'client',
+        clientSecret: 'private-secret',
+        teamId: 'team',
+        channelId: 'channel',
+        limit: 50,
+      },
+    })
+
+    expect(persisted.webhookUrl).toBe('')
+    expect(persisted.teamsConfig.clientSecret).toBe('')
+    expect(JSON.stringify(persisted)).not.toContain('private-secret')
+    expect(JSON.stringify(persisted)).not.toContain('private-webhook')
   })
 
   it('returns a calm no-target message when nothing needs a reminder', () => {

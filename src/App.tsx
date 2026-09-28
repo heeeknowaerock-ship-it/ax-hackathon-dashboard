@@ -453,7 +453,6 @@ function App() {
     try {
       const result = await saveTeamsAutomation({
         enabled: automationState.enabled,
-        webhookUrl: automationState.webhookUrl,
         intervalMinutes: automationState.intervalMinutes,
         leadBusinessDays: reminderPolicy.leadBusinessDays,
         teamsConfig,
@@ -690,7 +689,7 @@ function App() {
           <div className="panel-header">
             <div>
               <h2>Teams 연동 설정</h2>
-              <p>Microsoft Graph 앱 정보를 넣고 동기화를 누르면 Teams 론칭 타래를 읽어와 현재 현황표로 반영합니다.</p>
+              <p>Microsoft Graph 자격증명은 브라우저가 아니라 서버의 안전한 환경변수에서만 관리합니다.</p>
             </div>
             <span className={`mini-pill ${backendStatus === '연결됨' ? 'safe' : 'danger'}`}>
               동기화 서버 {backendStatus}
@@ -698,51 +697,14 @@ function App() {
           </div>
 
           <div className="teams-grid">
-            <label>
-              Tenant ID
-              <input
-                type="text"
-                value={teamsConfig.tenantId}
-                onChange={(event) => updateTeamsConfig('tenantId', event.target.value)}
-                placeholder="Microsoft Entra tenant ID"
-              />
-            </label>
-            <label>
-              Client ID
-              <input
-                type="text"
-                value={teamsConfig.clientId}
-                onChange={(event) => updateTeamsConfig('clientId', event.target.value)}
-                placeholder="앱 등록 client ID"
-              />
-            </label>
-            <label>
-              Client Secret
-              <input
-                type="password"
-                value={teamsConfig.clientSecret}
-                onChange={(event) => updateTeamsConfig('clientSecret', event.target.value)}
-                placeholder={automationState.hasClientSecret ? '비워두면 서버 저장값 유지' : '이번 실행/자동 발송에 사용'}
-              />
-            </label>
-            <label>
-              Team ID
-              <input
-                type="text"
-                value={teamsConfig.teamId}
-                onChange={(event) => updateTeamsConfig('teamId', event.target.value)}
-                placeholder="Teams 팀 ID"
-              />
-            </label>
-            <label>
-              Channel ID
-              <input
-                type="text"
-                value={teamsConfig.channelId}
-                onChange={(event) => updateTeamsConfig('channelId', event.target.value)}
-                placeholder="론칭 타래가 있는 채널 ID"
-              />
-            </label>
+            <div className="sync-meta-card">
+              <strong>서버 자격증명</strong>
+              <span>
+                {automationState.hasClientSecret
+                  ? '서버에 안전하게 설정됨'
+                  : '서버 환경설정 필요'}
+              </span>
+            </div>
             <label>
               조회 개수
               <input
@@ -788,15 +750,14 @@ function App() {
           </div>
 
           <div className="teams-grid automation-grid">
-            <label>
-              Teams 웹훅 URL
-              <input
-                type="password"
-                value={automationState.webhookUrl}
-                onChange={(event) => updateAutomationField('webhookUrl', event.target.value)}
-                placeholder={automationState.hasWebhookUrl ? '비워두면 서버 저장 웹훅 유지' : 'Teams Incoming Webhook / Workflow URL'}
-              />
-            </label>
+            <div className="sync-meta-card">
+              <strong>Teams Workflow</strong>
+              <span>
+                {automationState.hasWebhookUrl
+                  ? '서버에 안전하게 설정됨'
+                  : '서버 환경설정 필요'}
+              </span>
+            </div>
             <label>
               자동 발송 사용
               <select
