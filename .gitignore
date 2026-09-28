@@ -23,3 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
+
+# Local Teams automation state and secrets
+server/.teams-automation-state.json
