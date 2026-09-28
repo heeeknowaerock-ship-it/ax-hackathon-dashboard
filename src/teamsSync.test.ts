@@ -87,6 +87,19 @@ describe('Teams launch thread sync', () => {
     expect(signals.approvalPending).toBe(true)
   })
 
+  it('derives readiness flags from the operational wording used in real replies', () => {
+    const signals = parseTeamsReplySignals([
+      { body: { content: '표지, 서지, 원고 완입니다:)' } },
+      { body: { content: '4권 완고 처리 완료하였습니다!' } },
+      { body: { content: '등록요청 및 목차 추가 완입니다!' } },
+    ])
+
+    expect(signals.bibliographicReady).toBe(true)
+    expect(signals.coverReady).toBe(true)
+    expect(signals.manuscriptReady).toBe(true)
+    expect(signals.registered).toBe(true)
+  })
+
   it('maps a Teams thread and like reaction into a completed launch record', () => {
     const message: TeamsChannelMessage = {
       id: 'message-1',
@@ -120,6 +133,54 @@ describe('Teams launch thread sync', () => {
     expect(record.thumbsUpComplete).toBe(true)
     expect(record.completed).toBe(true)
     expect(record.launchThreadUrl).toBe('https://teams.example.com/thread/1')
+  })
+
+  it('parses and includes the narrative format used by the real launch channel', () => {
+    const message: TeamsChannelMessage = {
+      id: 'real-format-1',
+      subject: '',
+      webUrl: 'https://teams.example.com/thread/real-format-1',
+      from: { user: { displayName: '담당자' } },
+      body: {
+        content:
+          '에이블 가상작가 &lt;테스트 단행 작품&gt; 리디 라노체 단행 론칭 타래입니다. 출간 일정: 2026-10-07 오전 7시 연령가: 19세',
+      },
+      replies: [],
+    }
+
+    const summary = buildTeamsSyncSummary([message])
+
+    expect(summary.skipped).toBe(0)
+    expect(summary.records).toHaveLength(1)
+    expect(summary.records[0]).toMatchObject({
+      label: '에이블',
+      author: '가상작가',
+      title: '테스트 단행 작품',
+      platform: '리디',
+      format: '단행',
+      releaseDate: '2026-10-07',
+    })
+  })
+
+  it.each([
+    {
+      body: '비올렛 가상작가 &lt;테스트 특별 외전&gt; 카카오 추석 특별 외전 론칭 타래입니다. 출간 일정: 26년 09월 23일 18시',
+      expected: { title: '테스트 특별 외전', platform: '카카오페이지', releaseDate: '2026-09-23' },
+    },
+    {
+      body: '에이블 가상작가 &lt;테스트 2차 외전&gt; 2차 외전 론칭 준비 타래입니다! 론칭 일정 : 2026년 9월 19일 00시 플랫폼 : 카카오페이지',
+      expected: { title: '테스트 2차 외전', platform: '카카오페이지', releaseDate: '2026-09-19' },
+    },
+    {
+      body: '비올렛 가상작가 &lt;테스트 리다무 외전&gt; 리다무 외전 기획전 론칭 타래입니다. 출간일: 2026.10.08',
+      expected: { title: '테스트 리다무 외전', platform: '리디', releaseDate: '2026-10-08' },
+    },
+    {
+      body: '원티드 가상작가 『테스트 기다무 작품』 카카오페이지 기다무 론칭 타래입니다.',
+      expected: { title: '테스트 기다무 작품', platform: '카카오페이지', releaseDate: '' },
+    },
+  ])('parses real channel date, platform alias, and title variants', ({ body, expected }) => {
+    expect(parseLaunchThreadBody(body)).toMatchObject(expected)
   })
 
   it('builds a dashboard sync summary from multiple Teams threads', () => {

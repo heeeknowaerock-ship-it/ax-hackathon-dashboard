@@ -32,7 +32,7 @@ const FIELD_ALIASES = {
   label: ['레이블', '라벨'],
   author: ['작가', '작가명'],
   title: ['제목', '작품명'],
-  releaseDate: ['출간 일정', '출간일정', '출간일', '출간 예정일', '출간예정일'],
+  releaseDate: ['출간 일정', '출간일정', '출간일', '출간 예정일', '출간예정일', '론칭 일정', '론칭일정'],
   format: ['구분', '형태', '연재/단행'],
   platform: ['출간 플랫폼', '플랫폼', '유통 플랫폼', '출간처'],
 }
@@ -84,10 +84,15 @@ function normalizeDate(value = '') {
   if (!cleaned || /미정|추후|TBD/i.test(cleaned)) return ''
 
   const match = cleaned.match(/(20\d{2})[.\-/년\s]+(\d{1,2})[.\-/월\s]+(\d{1,2})/)
-  if (!match) return ''
+  if (match) {
+    const [, year, month, day] = match
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  }
 
-  const [, year, month, day] = match
-  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  const shortYearMatch = cleaned.match(/(?:^|\D)(\d{2})년\s*(\d{1,2})월\s*(\d{1,2})일?/)
+  if (!shortYearMatch) return ''
+  const [, year, month, day] = shortYearMatch
+  return `20${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
 }
 
 function splitLines(text = '') {
@@ -172,13 +177,59 @@ function extractPlatformAndFormat(lines) {
   }
 }
 
+function parseNarrativeLaunchHeader(content = '') {
+  const text = stripHtml(content)
+  const titleMatch = text.match(/[<〈《『]([^>〉》』]+)[>〉》』]/)
+  if (!titleMatch || titleMatch.index === undefined) {
+    return { label: '', author: '', title: '', releaseDate: '', format: '연재', platform: '' }
+  }
+
+  const headerParts = text
+    .slice(0, titleMatch.index)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+  const platformAlias = [
+    ['카카오페이지', '카카오페이지'],
+    ['네이버 시리즈', '네이버 시리즈'],
+    ['네이버시리즈', '네이버 시리즈'],
+    ['원스토어', '원스토어'],
+    ['미스터블루', '미스터블루'],
+    ['북큐브', '북큐브'],
+    ['교보문고', '교보문고'],
+    ['알라딘', '알라딘'],
+    ['예스24', '예스24'],
+    ['리다무', '리디'],
+    ['카기무', '카카오페이지'],
+    ['카카오', '카카오페이지'],
+    ['시리즈', '네이버 시리즈'],
+    ['리디', '리디'],
+  ].find(([alias]) => text.includes(alias))
+  const releaseDateMatch = text.match(
+    /(?:출간\s*일정|출간일정|출간일|출간\s*예정일|론칭\s*일정|론칭일정)\s*[:：]\s*(.+)/,
+  )
+
+  return {
+    label: cleanFieldValue(headerParts[0] ?? ''),
+    author: cleanFieldValue(headerParts.slice(1).join(' ')),
+    title: cleanFieldValue(titleMatch[1] ?? ''),
+    releaseDate: normalizeDate(releaseDateMatch?.[1] ?? ''),
+    format: /단행/.test(text) ? '단행' : '연재',
+    platform: platformAlias?.[1] ?? '',
+  }
+}
+
 export function parseLaunchThreadBody(content = '') {
   const lines = splitLines(content)
-  const label = cleanFieldValue(findFieldValue(lines, FIELD_ALIASES.label))
-  const author = cleanFieldValue(findFieldValue(lines, FIELD_ALIASES.author))
-  const title = cleanFieldValue(findFieldValue(lines, FIELD_ALIASES.title))
-  const releaseDate = normalizeDate(findFieldValue(lines, FIELD_ALIASES.releaseDate))
-  const { platform, format } = extractPlatformAndFormat(lines)
+  const narrative = parseNarrativeLaunchHeader(content)
+  const label = cleanFieldValue(findFieldValue(lines, FIELD_ALIASES.label)) || narrative.label
+  const author = cleanFieldValue(findFieldValue(lines, FIELD_ALIASES.author)) || narrative.author
+  const title = cleanFieldValue(findFieldValue(lines, FIELD_ALIASES.title)) || narrative.title
+  const releaseDate = normalizeDate(findFieldValue(lines, FIELD_ALIASES.releaseDate)) || narrative.releaseDate
+  const structured = extractPlatformAndFormat(lines)
+  const platform = structured.platform || narrative.platform
+  const hasStructuredFormat = Boolean(findFieldValue(lines, FIELD_ALIASES.format) || structured.platform)
+  const format = hasStructuredFormat ? structured.format : narrative.format
 
   return {
     label,
@@ -214,11 +265,11 @@ export function parseTeamsReplySignals(replies = []) {
     const text = stripHtml(reply?.body?.content ?? '')
     const normalized = text.replace(/\s+/g, '')
 
-    if (hasKeyword(normalized, ['서지정보']) && hasKeyword(normalized, ['완', '전달', '도착'])) {
+    if (hasKeyword(normalized, ['서지정보', '서지']) && hasKeyword(normalized, ['완', '완료', '전달', '도착'])) {
       signals.bibliographicReady = true
     }
 
-    if (hasKeyword(normalized, ['원고']) && hasKeyword(normalized, ['완', '전달', '도착', '업로드'])) {
+    if (hasKeyword(normalized, ['원고', '완고']) && hasKeyword(normalized, ['완', '완료', '전달', '도착', '업로드', '처리'])) {
       signals.manuscriptReady = true
     }
 
@@ -230,7 +281,10 @@ export function parseTeamsReplySignals(replies = []) {
       signals.productionStarted = true
     }
 
-    if (hasKeyword(normalized, ['등록완료', '등록했습니다', '등록했어요', '등록완'])) {
+    if (
+      hasKeyword(normalized, ['등록완료', '등록했습니다', '등록했어요', '등록완'])
+      || /등록요청.*(?:완|완료)/.test(normalized)
+    ) {
       signals.registered = true
     }
 
@@ -258,7 +312,8 @@ export function parseTeamsReplySignals(replies = []) {
 function isLaunchThreadMessage(message) {
   const subject = message?.subject ?? ''
   const bodyText = stripHtml(message?.body?.content ?? '')
-  return /론칭\s*준비\s*타래|\[론/.test(subject) || /론칭\s*준비\s*타래/.test(bodyText)
+  const launchThreadPattern = /론칭\s*준비\s*타래|론칭\s*타래|출간\s*타래|\[론/
+  return launchThreadPattern.test(subject) || launchThreadPattern.test(bodyText)
 }
 
 function buildFallbackTitle(message) {
